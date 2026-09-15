@@ -341,7 +341,7 @@ def print_daily_extremes(series, label_prefix="", unit="F"):
              f" | Min {group.min():.1f}{unit} @ {group.idxmin().strftime('%H:%M')}")
 
 
-def render_windrose(df, cutoff, end_time, out_path=None, ax=None):
+def render_windrose(df, cutoff, end_time, out_path=None, ax=None, show_calm=False):
     """Render a wind rose (direction/speed frequency) for the given
     timeframe. df must have 'wind_speed' (mph) and 'wind_dir' (compass
     degrees, 0=N/90=E/etc.) columns already filtered to the window of
@@ -358,16 +358,26 @@ def render_windrose(df, cutoff, end_time, out_path=None, ax=None):
         nothing to plot, in which case a short explanatory message is
         left in the axes instead of an empty polar grid).
 
-    Speeds below CALM_THRESHOLD_MPH are excluded from the directional
-    bins and reported separately as %calm -- a near-zero-speed reading's
-    direction is essentially noise, and including it would blur every
-    sector's frequency toward the calm-heavy hours instead of showing
-    where the real wind actually came from.
+    By default, speeds below CALM_THRESHOLD_MPH are excluded from the
+    directional bins and reported separately as %calm -- a near-zero-speed
+    reading's direction is essentially noise, and including it would blur
+    every sector's frequency toward the calm-heavy hours instead of
+    showing where the real wind actually came from. Pass show_calm=True
+    to instead bin calm observations into their own low-speed wedge like
+    the direction was trustworthy -- useful for visually matching tools
+    that don't exclude calm, at the cost of that statistical caveat.
     """
     CALM_THRESHOLD_MPH = 2.0
-    SPEED_BINS = [0, 5, 10, 15, 20, 25, np.inf]
-    SPEED_LABELS = ["0-5", "5-10", "10-15", "15-20", "20-25", "25+"]
-    SPEED_COLORS = ["#c6dbef", "#6baed6", "#2171b5", "#f4a582", "#d6604d", "#67000d"]
+    if show_calm:
+        SPEED_BINS = [0, CALM_THRESHOLD_MPH, 5, 10, 15, 20, 25, np.inf]
+        SPEED_LABELS = [f"<{CALM_THRESHOLD_MPH:g}", f"{CALM_THRESHOLD_MPH:g}-5",
+                         "5-10", "10-15", "15-20", "20-25", "25+"]
+        SPEED_COLORS = ["#f0f0f0", "#c6dbef", "#6baed6", "#2171b5",
+                         "#f4a582", "#d6604d", "#67000d"]
+    else:
+        SPEED_BINS = [0, 5, 10, 15, 20, 25, np.inf]
+        SPEED_LABELS = ["0-5", "5-10", "10-15", "15-20", "20-25", "25+"]
+        SPEED_COLORS = ["#c6dbef", "#6baed6", "#2171b5", "#f4a582", "#d6604d", "#67000d"]
     N_SECTORS = 16
     SECTOR_WIDTH = 360.0 / N_SECTORS
     SECTOR_LABELS = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
@@ -394,7 +404,7 @@ def render_windrose(df, cutoff, end_time, out_path=None, ax=None):
     calm_mask = df["wind_speed"] < CALM_THRESHOLD_MPH
     calm_pct = calm_mask.mean() * 100
 
-    active = df.loc[~calm_mask].copy()
+    active = df.copy() if show_calm else df.loc[~calm_mask].copy()
     if active.empty:
         return _empty("All observations below the calm threshold -- nothing to plot.")
 
@@ -446,9 +456,11 @@ def render_windrose(df, cutoff, end_time, out_path=None, ax=None):
     ax.yaxis.set_major_formatter(mticker.PercentFormatter())
     ax.tick_params(axis="y", labelsize=8 if not embedded else 7)
 
+    calm_note = (f"Calm (<{CALM_THRESHOLD_MPH:.0f}mph, binned): {calm_pct:.1f}%" if show_calm
+                 else f"Calm (<{CALM_THRESHOLD_MPH:.0f}mph, excluded): {calm_pct:.1f}%")
     title = (f"G6964 Wind Rose  |  {cutoff.strftime('%Y-%m-%d %H:%M')} -> "
              f"{end_time.strftime('%Y-%m-%d %H:%M')} UTC\n"
-             f"n={total_n}  |  Calm (<{CALM_THRESHOLD_MPH:.0f}mph): {calm_pct:.1f}%")
+             f"n={total_n}  |  {calm_note}")
     ax.set_title(title, fontsize=11 if not embedded else 9.5, pad=24 if not embedded else 18)
     ax.legend(loc="upper left", bbox_to_anchor=(1.05, 1.08),
               fontsize=8 if not embedded else 7,
@@ -492,6 +504,12 @@ def main():
                               "main two panels in the SAME output file. "
                               "The line-graph panels stay the same size; "
                               "the figure just gets taller."))
+    parser.add_argument("--windrose-show-calm", action="store_true",
+                        help=("Bin calm (<2mph) observations into the rose as "
+                              "their own low-speed wedge instead of excluding "
+                              "them and reporting calm as a title percentage. "
+                              "Matches tools that don't exclude calm from the "
+                              "directional bins; no effect without --windrose."))
     parser.add_argument("--tz", default=DEFAULT_TZ,
                         help=f"IANA zone for the 8am-8am local period table "
                              f"(default: {DEFAULT_TZ})")
@@ -1569,7 +1587,8 @@ def main():
                 [windrose_left_frac, windrose_bottom_frac,
                  windrose_width_frac, windrose_height_frac],
                 projection="polar")
-            render_windrose(windrose_df, cutoff, windrose_end, ax=windrose_ax)
+            render_windrose(windrose_df, cutoff, windrose_end, ax=windrose_ax,
+                            show_calm=args.windrose_show_calm)
         else:
             print("  [windrose] Skipped -- no wind_speed+direction data in this timeframe.")
 
