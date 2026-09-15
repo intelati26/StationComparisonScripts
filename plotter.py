@@ -359,13 +359,17 @@ def render_windrose(df, cutoff, end_time, out_path=None, ax=None, show_calm=Fals
         left in the axes instead of an empty polar grid).
 
     By default, speeds below CALM_THRESHOLD_MPH are excluded from the
-    directional bins and reported separately as %calm -- a near-zero-speed
-    reading's direction is essentially noise, and including it would blur
-    every sector's frequency toward the calm-heavy hours instead of
-    showing where the real wind actually came from. Pass show_calm=True
-    to instead bin calm observations into their own low-speed wedge like
-    the direction was trustworthy -- useful for visually matching tools
-    that don't exclude calm, at the cost of that statistical caveat.
+    directional bins -- a near-zero-speed reading's direction is
+    essentially noise, and including it would blur every sector's
+    frequency toward the calm-heavy hours instead of showing where the
+    real wind actually came from. Calm is instead reported as a labeled
+    circle at the plot's center (the IEM windrose convention), with the
+    real bars pushed outward to start just past it; the radial % labels
+    stay in terms of "% of observations" despite that offset. Pass
+    show_calm=True to instead bin calm observations into their own
+    low-speed wedge like the direction was trustworthy, with no center
+    hole -- useful for visually matching tools that don't exclude calm,
+    at the cost of that statistical caveat.
     """
     CALM_THRESHOLD_MPH = 2.0
     if show_calm:
@@ -435,7 +439,18 @@ def render_windrose(df, cutoff, end_time, out_path=None, ax=None, show_calm=Fals
     ax.set_theta_zero_location("N")
     ax.set_theta_direction(-1)
 
-    bottom = np.zeros(N_SECTORS)
+    # The center hole for "Calm" only applies when calm is excluded from
+    # the bars (the default) -- with show_calm=True calm is already a
+    # real wedge starting at r=0, so there's nothing left for a hole to
+    # represent. Sized as a fraction of the tallest stacked bar rather
+    # than a fixed percent so it stays proportionate whether this is a
+    # calm week or a windy one.
+    CALM_HOLE_FRAC = 0.22
+    stack_max = freq_pct.sum(axis=1).max()
+    stack_max = stack_max if stack_max > 0 else 1.0
+    hole_r = 0.0 if show_calm else stack_max * CALM_HOLE_FRAC
+
+    bottom = np.full(N_SECTORS, hole_r)
     bar_width = np.deg2rad(SECTOR_WIDTH * 0.9)
     for label, color in zip(SPEED_LABELS, SPEED_COLORS):
         vals = freq_pct[label].to_numpy()
@@ -451,13 +466,35 @@ def render_windrose(df, cutoff, end_time, out_path=None, ax=None, show_calm=Fals
     tick_labels = [f"{label}\n{deg:g}°"
                    for label, deg in zip(SECTOR_LABELS, np.arange(N_SECTORS) * SECTOR_WIDTH)]
     ax.set_xticklabels(tick_labels, fontsize=8 if not embedded else 7)
-    max_r = bottom.max() if bottom.max() > 0 else 1.0
-    ax.set_ylim(0, max_r * 1.15)
-    ax.yaxis.set_major_formatter(mticker.PercentFormatter())
+    max_r = bottom.max() if bottom.max() > hole_r else hole_r + 1.0
+    plot_ceiling = max_r * 1.15
+    ax.set_ylim(0, plot_ceiling)
+
+    # Radial ticks need to read as "% of observations" even though the
+    # bars are physically pushed outward by hole_r to clear the calm
+    # circle -- so tick POSITIONS are hole_r + n, but the LABELS are just
+    # "n%", since the offset is a drawing choice, not part of the scale.
+    # MaxNLocator picks the same kind of "nice" step (1/2/5/10...) it
+    # would for a normal axis, just computed over the un-offset span so
+    # it doesn't end up choosing steps based on where the hole happens to
+    # push the numbers.
+    span = plot_ceiling - hole_r
+    raw_ticks = [t for t in mticker.MaxNLocator(nbins=5, steps=[1, 2, 5, 10]).tick_values(0, span)
+                 if 0 <= t <= span]
+    ax.set_yticks([hole_r + t for t in raw_ticks])
+    ax.set_yticklabels([f"{t:.1f}%" for t in raw_ticks])
     ax.tick_params(axis="y", labelsize=8 if not embedded else 7)
 
+    if not show_calm:
+        # Drawn last so it sits on top of the innermost bar segments'
+        # edges -- the "0.0%" gridline at r=hole_r already forms the
+        # circle's boundary (it's just the first radial tick), this only
+        # adds the label inside it.
+        ax.text(0, 0, f"Calm\n{calm_pct:.1f}%", ha="center", va="center",
+                fontsize=9 if not embedded else 8, fontweight="bold", zorder=5)
+
     calm_note = (f"Calm (<{CALM_THRESHOLD_MPH:.0f}mph, binned): {calm_pct:.1f}%" if show_calm
-                 else f"Calm (<{CALM_THRESHOLD_MPH:.0f}mph, excluded): {calm_pct:.1f}%")
+                 else f"Calm (<{CALM_THRESHOLD_MPH:.0f}mph, excluded, see center): {calm_pct:.1f}%")
     title = (f"G6964 Wind Rose  |  {cutoff.strftime('%Y-%m-%d %H:%M')} -> "
              f"{end_time.strftime('%Y-%m-%d %H:%M')} UTC\n"
              f"n={total_n}  |  {calm_note}")
