@@ -33,7 +33,7 @@ Usage:
     python plotter.py --days 60           # 60 days
     python plotter.py --hours 144         # Fine-grained: 144 hours
     python plotter.py --days 7 --stations G6964,KSGF
-    python plotter.py --no-model          # Skip model line
+    python plotter.py --no-model          # URMA/RTMA only -- skip HRRR blend & forecast
     python plotter.py --start-date 2026-06-01 --end-date 2026-07-01
 """
 
@@ -482,7 +482,8 @@ def main():
     parser.add_argument("--stations", type=str, default=None,
                         help="Comma-separated station IDs to plot (default: all in DB).")
     parser.add_argument("--no-model", action="store_true",
-                        help="Skip plotting the unified model line on the top panel")
+                        help="Skip the HRRR blend and forecast tail on the top "
+                             "panel; URMA/RTMA (observation analysis) still plots")
     parser.add_argument("--windrose", action="store_true",
                         help=("Also render a wind rose (direction vs speed "
                               "frequency) for G6964 station data over the "
@@ -499,6 +500,13 @@ def main():
 
     now_utc = pd.Timestamp.now(tz="UTC")
     FORECAST_EXT_HOURS = 7
+    # This buffer only exists to give the HRRR forecast tail somewhere to
+    # render (lead-in on the left, forecast room on the right). --no-model
+    # drops HRRR entirely -- URMA/RTMA (pure observation) are drawn
+    # separately and need neither a lead-in nor forward room, since they're
+    # just plotted straight within [cutoff, plot_end] -- so with --no-model
+    # this buffer has nothing left to serve on either end.
+    model_lead_hours = 0.0 if args.no_model else FORECAST_EXT_HOURS
 
     if args.start_date:
         start_time = pd.to_datetime(args.start_date, utc=True)
@@ -511,12 +519,12 @@ def main():
     elif args.days is not None:
         lookback_hours = args.days * 24.0
         end_time = now_utc
-        start_time = now_utc - timedelta(hours=lookback_hours + FORECAST_EXT_HOURS)
+        start_time = now_utc - timedelta(hours=lookback_hours + model_lead_hours)
         print(f"Lookback: {args.days} days ({lookback_hours:.0f} hours)")
     else:
         lookback_hours = args.hours
         end_time = now_utc
-        start_time = now_utc - timedelta(hours=lookback_hours + FORECAST_EXT_HOURS)
+        start_time = now_utc - timedelta(hours=lookback_hours + model_lead_hours)
         print(f"Lookback: {lookback_hours:.0f} hours ({lookback_hours/24:.1f} days)")
 
     cutoff = start_time
@@ -824,6 +832,30 @@ def main():
     unified_model, unified_sd = unify_model_cascade(pivoted_models, pivoted_sd)
     unified_precip = _unify_pivoted_column(pivoted_precip)
 
+    # model_for_bias/sd_for_bias are the single source of truth for BOTH
+    # the top-panel line and the bottom-panel bias math -- previously the
+    # top panel switched to URMA/RTMA-only under --no-model but the bias
+    # panel kept reading the full unified_model (HRRR included) regardless,
+    # so the two panels disagreed once RTMA's frontier fell behind the
+    # station feed: the bias line kept going past that frontier by
+    # silently switching to comparing station obs against HRRR forecast
+    # instead of ending there. Deriving both panels from the same series
+    # makes that impossible.
+    if args.no_model:
+        obs_cols = [c for c in ("urma", "rtma") if c in pivoted_models.columns]
+        model_for_bias = (_unify_pivoted_column(pivoted_models[obs_cols])
+                           if obs_cols else pd.Series(dtype=float))
+        sd_obs_cols = [c for c in ("urma", "rtma") if c in pivoted_sd.columns] if not pivoted_sd.empty else []
+        sd_for_bias = (_unify_pivoted_column(pivoted_sd[sd_obs_cols])
+                        if sd_obs_cols else pd.Series(dtype=float))
+        if not model_for_bias.empty:
+            model_for_bias.index = pd.to_datetime(model_for_bias.index, utc=True)
+        if not sd_for_bias.empty:
+            sd_for_bias.index = pd.to_datetime(sd_for_bias.index, utc=True)
+    else:
+        model_for_bias = unified_model
+        sd_for_bias = unified_sd
+
     if not unified_model.empty:
         unified_model.index = pd.to_datetime(unified_model.index, utc=True)
     if not unified_sd.empty:
@@ -876,7 +908,14 @@ def main():
     plot_end = end_time
     future_cap = now_utc + pd.Timedelta(hours=FORECAST_EXT_HOURS)
 
-    if not unified_model.empty:
+    # Same reasoning as model_lead_hours above: this only exists to leave
+    # room for the HRRR forecast tail, which --no-model drops entirely
+    # (URMA/RTMA are drawn separately and never need forward room). Model
+    # rows are loaded from the DB unconditionally (unified_model isn't
+    # gated on --no-model, only the top-panel plot call is), so without
+    # this guard the window could still balloon forward even with the
+    # HRRR blend turned off.
+    if not args.no_model and not unified_model.empty:
         max_model_time = unified_model.index.max()
         if max_model_time > end_time:
             plot_end = min(max_model_time, future_cap)
@@ -989,8 +1028,21 @@ def main():
             station_series_for_summary[col] = (sub[col], color or "gray")
             print_daily_extremes(sub[col], label_prefix=f"{col}: ")
 
-    if not args.no_model and not unified_model.empty:
-        sub_unified = unified_model.dropna()
+    # --- TOP PANEL: MODEL LINE(S) ---
+    # URMA/RTMA are observation-quality analysis, not a forecast -- they
+    # stay visible even under --no-model. --no-model only turns off HRRR
+    # (the forecast tier) and its forward-looking tail; it does not mean
+    # "hide everything model-derived." Uses model_for_bias/sd_for_bias so
+    # this panel and the bias panel below always agree on which series
+    # they're drawing from.
+    if args.no_model:
+        obs_series = model_for_bias[(model_for_bias.index >= cutoff) & (model_for_bias.index <= plot_end)]
+        if not obs_series.empty:
+            ax1.plot(obs_series.index, obs_series.values, linestyle="--",
+                     linewidth=1.8, color="purple",
+                     label="URMA/RTMA (observation analysis)")
+    elif not model_for_bias.empty:
+        sub_unified = model_for_bias.dropna()
         sub_unified = sub_unified[(sub_unified.index >= cutoff) & (sub_unified.index <= plot_end)]
         if not sub_unified.empty:
             observed_mask = sub_unified.index <= now_utc
@@ -1007,8 +1059,8 @@ def main():
                          color="purple", alpha=0.7,
                          label="HRRR Forecast (future hours)")
 
-            if not unified_sd.empty:
-                sub_sd = unified_sd.reindex(sub_unified.index)
+            if not sd_for_bias.empty:
+                sub_sd = sd_for_bias.reindex(sub_unified.index)
                 if sub_sd.notna().any():
                     # Only fill_between where temp_sd is real; NaN stretches
                     # render as gaps in the band instead of a fabricated
@@ -1083,13 +1135,13 @@ def main():
     box_bottom = 0.0  # safe default if the daily summary box below never gets drawn
 
     if (not pivoted_stations.empty and "G6964" in pivoted_stations.columns
-            and not unified_model.empty):
+            and not model_for_bias.empty):
         station_df = pivoted_stations[["G6964"]].dropna().reset_index()
         station_df.columns = ["timestamp", "station_val"]
         station_df = station_df.dropna(subset=["timestamp"])
         station_df.set_index("timestamp", inplace=True)
 
-        model_df = unified_model.dropna().reset_index()
+        model_df = model_for_bias.dropna().reset_index()
         model_df.columns = ["timestamp", "model_val"]
         model_df = model_df.dropna(subset=["timestamp"])
         model_df = model_df.sort_values("timestamp")
@@ -1099,8 +1151,21 @@ def main():
         combined_df = pd.concat([model_df, station_df], axis=1, sort=False)
         combined_df = combined_df[combined_df.index.notnull()]
         combined_df = combined_df.sort_index()
-        combined_df["model_interpolated"] = combined_df["model_val"].interpolate(method="time")
-        combined_df["station_interpolated"] = combined_df["station_val"].interpolate(method="time")
+        # limit_area="inside" is load-bearing: plain interpolate(method="time")
+        # doesn't just fill interior gaps, it also forward-fills trailing
+        # NaNs with the last real value (and would back-fill leading ones
+        # too). Without this, once either the model cascade or the station
+        # feed stops updating, that column goes flat instead of ending --
+        # and error_series/rolling_bias below would keep computing off that
+        # fabricated flat tail instead of stopping where the real data does.
+        # Note model_df is already restricted to model_for_bias -- under
+        # --no-model that's URMA/RTMA only, so this interpolation can't
+        # smuggle HRRR forecast values in past the RTMA frontier either;
+        # the model column simply has nothing beyond it to interpolate from.
+        combined_df["model_interpolated"] = combined_df["model_val"].interpolate(
+            method="time", limit_area="inside")
+        combined_df["station_interpolated"] = combined_df["station_val"].interpolate(
+            method="time", limit_area="inside")
 
         # temp_sd needs the same treatment as model_val: it's only known
         # at the model's native hourly valid_times, but error_df's index
@@ -1109,10 +1174,12 @@ def main():
         # miss almost every station-only timestamp and come back NaN.
         # Interpolate it onto the union index the same way model_val is,
         # so the bias-panel band tracks the same real values the top
-        # panel already shows correctly.
-        if not unified_sd.empty:
-            sd_df = unified_sd.reindex(combined_df.index.union(unified_sd.index))
-            sd_df = sd_df.sort_index().interpolate(method="time")
+        # panel already shows correctly. Same limit_area="inside" reasoning
+        # as above -- the SD band shouldn't extend flat past its own real
+        # range either.
+        if not sd_for_bias.empty:
+            sd_df = sd_for_bias.reindex(combined_df.index.union(sd_for_bias.index))
+            sd_df = sd_df.sort_index().interpolate(method="time", limit_area="inside")
             combined_df["sd_interpolated"] = sd_df.reindex(combined_df.index)
         else:
             combined_df["sd_interpolated"] = np.nan
@@ -1253,7 +1320,7 @@ def main():
             ax2.fill_between(timestamps, error_series, 0, where=(error_series < 0),
                              color="crimson", alpha=0.2, interpolate=True, zorder=1)
 
-            if not unified_sd.empty:
+            if not sd_for_bias.empty:
                 error_sd = error_df["sd_interpolated"]
                 if error_sd.notna().any():
                     # Drawn UNDER the data lines (zorder=1, below the
