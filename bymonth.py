@@ -296,11 +296,26 @@ def _cleanup_tmp(path):
         pass
 
 
-def open_database(path):
-    with open(path, "rb") as fh:
-        head = fh.read(16)
-    if head[:15] == b"SQLite format 3":
-        return sqlite3.connect(f"file:{path}?mode=ro", uri=True), None
+ def open_database(path):
+     with open(path, "rb") as fh:
+         head = fh.read(16)
+
+     if not head:
+         sys.exit(
+             f"error: database file is empty: {path}\n"
+             "Set WEATHER_DB_PATH or use --db to point to a valid SQLite database."
+         )
+ 
+     if head[:15] == b"SQLite format 3":
+         return sqlite3.connect(f"file:{path}?mode=ro", uri=True), None
+ 
+     with open(path, "rb") as fh:
+         blob = fh.read()
+     elif head and (head[0] & 0x0F) == 8 and (head[0] >> 4) <= 7:
+         try:
+             data, how = zlib.decompress(blob), "zlib"
+         except zlib.error:
+             pass
 
     with open(path, "rb") as fh:
         blob = fh.read()
@@ -315,8 +330,17 @@ def open_database(path):
             data, how = zlib.decompress(blob), "zlib"
         except zlib.error:
             pass
-    if data is None or data[:15] != b"SQLite format 3":
-        sys.exit(f"error: {path} is neither a SQLite database nor a gzip/zlib-compressed one (starts with {head[:8]!r})")
+        if data is None or data[:15] != b"SQLite format 3":
+        if len(blob) < 16:
+            detail = f"file is only {len(blob)} byte(s); it may be truncated"
+        else:
+            detail = f"starts with {blob[:8]!r}"
+
+        sys.exit(
+            f"error: {path} is neither a SQLite database nor a "
+            f"gzip/zlib-compressed one ({detail}).\n"
+            "Use --db PATH or set WEATHER_DB_PATH to a valid database."
+        )
 
     fd, tmp = tempfile.mkstemp(prefix="weather_unpacked_", suffix=".db")
     with os.fdopen(fd, "wb") as fh:
