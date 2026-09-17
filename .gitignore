@@ -1,0 +1,59 @@
+weather_archive.db
+*.db
+.sqlite*
+*.sqlite
+*.sqlite3
+*.db-shm
+*.db-wal
+
+# Compiled/Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+dist/
+build/
+develop-eggs/
+*.egg-info/
+.eggs/
+.idea/
+
+# Temporary files
+*.swp
+*.swo
+*~.
+
+# Logs and caches
+*.log
+tmp/
+
+# Environment files
+.env
+.venv
+venv/
+
+# Mac-specific artifacts
+.DS_Store
+
+# Windows-specific artifacts
+Thumbs.db
+
+# Data results and generated outputs
+results/
+*.svg
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.pdf
+
+# IDE and editor files
+.vscode/
+.idea/
+
+# Test artifacts
+pytest.ini
+.pytest_cache/
+test-results/
+test-reports/
