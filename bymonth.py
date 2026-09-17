@@ -33,6 +33,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import calendar as calmod
 import atexit
 import base64
 import calendar
@@ -47,7 +48,7 @@ import tempfile
 import webbrowser
 import zlib
 from collections import defaultdict
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, time, timezone, timedelta, date
 
 try:
     from zoneinfo import ZoneInfo
@@ -819,28 +820,51 @@ def num(v):
     return None
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# SUNRISE / SUNSET — NOAA algorithm
+# ═══════════════════════════════════════════════════════════════════════════
+
 def sunrise_sunset(lat, lon, tz, d):
     day_num = d.toordinal() - (734124 - 40529)
     noon = datetime(d.year, d.month, d.day, 12, 0, 0, tzinfo=tz)
     offset = noon.utcoffset()
     tz_hours = offset.seconds / 3600.0 if offset else 0
+
     Jday = day_num + 2415018.5 + 0.5 - tz_hours / 24
     Jcent = (Jday - 2451545) / 36525
+
     Manom = 357.52911 + Jcent * (35999.05029 - 0.0001537 * Jcent)
     Mlong = (280.46646 + Jcent * (36000.76983 + Jcent * 0.0003032)) % 360
     Eccent = 0.016708634 - Jcent * (0.000042037 + 0.0001537 * Jcent)
-    Mobliq = 23 + (26 + ((21.448 - Jcent * (46.815 + Jcent * (0.00059 - Jcent * 0.001813)))) / 60) / 60
+    Mobliq = 23 + (26 + ((21.448 - Jcent * (46.815 + Jcent *
+                    (0.00059 - Jcent * 0.001813)))) / 60) / 60
     obliq = Mobliq + 0.00256 * math.cos(math.radians(125.04 - 1934.136 * Jcent))
     vary = math.tan(math.radians(obliq / 2)) ** 2
-    Seqcent = (math.sin(math.radians(Manom)) * (1.914602 - Jcent * (0.004817 + 0.000014 * Jcent)) +
-               math.sin(math.radians(2 * Manom)) * (0.019993 - 0.000101 * Jcent) +
+
+    Seqcent = (math.sin(math.radians(Manom)) *
+               (1.914602 - Jcent * (0.004817 + 0.000014 * Jcent)) +
+               math.sin(math.radians(2 * Manom)) *
+               (0.019993 - 0.000101 * Jcent) +
                math.sin(math.radians(3 * Manom)) * 0.000289)
     Struelong = Mlong + Seqcent
-    Sapplong = Struelong - 0.00569 - 0.00478 * math.sin(math.radians(125.04 - 1934.136 * Jcent))
-    declination = math.degrees(math.asin(math.sin(math.radians(obliq)) * math.sin(math.radians(Sapplong))))
-    eqtime = 4 * math.degrees(vary * math.sin(2 * math.radians(Mlong)) - 2 * Eccent * math.sin(math.radians(Manom)) + 4 * Eccent * vary * math.sin(math.radians(Manom)) * math.cos(2 * math.radians(Mlong)) - 0.5 * vary * vary * math.sin(4 * math.radians(Mlong)) - 1.25 * Eccent * Eccent * math.sin(2 * math.radians(Manom)))
+    Sapplong = Struelong - 0.00569 - 0.00478 * math.sin(
+        math.radians(125.04 - 1934.136 * Jcent))
+    declination = math.degrees(math.asin(
+        math.sin(math.radians(obliq)) * math.sin(math.radians(Sapplong))))
+
+    eqtime = 4 * math.degrees(
+        vary * math.sin(2 * math.radians(Mlong)) -
+        2 * Eccent * math.sin(math.radians(Manom)) +
+        4 * Eccent * vary * math.sin(math.radians(Manom)) *
+        math.cos(2 * math.radians(Mlong)) -
+        0.5 * vary * vary * math.sin(4 * math.radians(Mlong)) -
+        1.25 * Eccent * Eccent * math.sin(2 * math.radians(Manom)))
+
     try:
-        hourangle = math.degrees(math.acos(math.cos(math.radians(90.833)) / (math.cos(math.radians(lat)) * math.cos(math.radians(declination))) - math.tan(math.radians(lat)) * math.tan(math.radians(declination))))
+        hourangle = math.degrees(math.acos(
+            math.cos(math.radians(90.833)) /
+            (math.cos(math.radians(lat)) * math.cos(math.radians(declination))) -
+            math.tan(math.radians(lat)) * math.tan(math.radians(declination))))
     except ValueError:
         return None, None
     solarnoon = (720 - 4 * lon - eqtime + tz_hours * 60) / 1440
