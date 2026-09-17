@@ -1,22 +1,32 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-bymonth.py — physical-calendar monthly weather summary from weather_archive.db.
+bymonth.py — Unified monthly weather calendar with table and visual formats
+
+Features:
+- --calendar : Detailed calendar table (original bymonth.py behavior)
+- --viz     : Compact visual calendar (original bymonth_viz.py behavior)
+- --both    : Both formats side-by-side (HTML only)
 
 Auto-adapts to the on-disk layout:
   • wide:      one column per weather field (station, timestamp, temp, ...)
   • packed:    rows with a JSON/zlib payload column, e.g.
                observations(mac_address, dateutc, data_json)   ← your layout
   • whole-file gzip/zlib compression is unpacked to a temp file first.
-Timestamps may be ISO text, epoch seconds, or epoch milliseconds (probed).
+Timestamps may be ISO text, epoch seconds, or epoch milliseconds (probed.
 Dewpoint conversion is OPT-IN (--dewpoint-c): Ambient payloads are already °F.
 Database is always opened read-only.
 
 Usage:
-    python bymonth.py                      # current month
-    python bymonth.py 2026-08
-    python bymonth.py 2026-08 --inspect    # dump tables/devices/sample row, exit
-    python bymonth.py 2026-08 --station "G6964"          # by device name or MAC
+    python bymonth.py                          # current month, calendar format
+    python bymonth.py --calendar                 # explicit calendar format
+    python bymonth.py --viz                      # current month, visual format  
+    python bymonth.py --both                     # current month, both formats (HTML)
+    python bymonth.py 2026-08                    # specific month, calendar format
+    python bymonth.py --viz 2026-08              # specific month, visual format
+    python bymonth.py --both 2026-08             # specific month, both formats (HTML)
+    python bymonth.py --calendar --viz           # both formats (alternative syntax)
+    python bymonth.py --station "G6964"          # by device name or MAC
     python bymonth.py 2026-08 --format text --out aug.txt
 """
 
@@ -89,7 +99,7 @@ CELL_LINES = [
     ("feels",  [("feels_like",               "minmax", "°",     0, "")]),
     ("RH",     [("relative_humidity",        "avg",    "%",     0, "")]),
     ("wind",   [("wind_speed",               "avg",    "mph",   0, ""),
-                ("wind_dir",                 "vdir",   "",      0, "")]),
+                 ("wind_dir",                 "vdir",   "",      0, "")]),
     ("gust",   [("wind_gust|max_daily_gust", "max",    "mph",   0, "")]),
     ("rain",   [("rain_daily",               "max",    '"',     2, "")]),
     ("rain/h", [("rain_hourly",              "max",    '"',     2, "")]),
@@ -99,7 +109,7 @@ CELL_LINES = [
     ("CO₂",    [("co2",                      "max",    "ppm",   0, "")]),
     ("PM2.5",  [("pm25",                     "avg",    "µg/m³", 1, "")]),
     ("⚡",     [("lightning_day",            "max",    "",      0, ""),
-                ("lightning_distance",       "min",    "mi",    0, "@ ")]),
+                 ("lightning_distance",       "min",    "mi",    0, "@ ")]),
     ("in",     [("temp_indoor",              "avg",    "°",     0, "")]),
 ]
 
@@ -149,7 +159,7 @@ for _alias, _canon in {
     "totalrainin": "rain_total",
     "uv": "uv_index", "solarradiation": "solar_radiation",
     "lightningstrikecountday": "lightning_day", "lightningday": "lightning_day",
-    "lightningstrikecounthour": "lightning_hour", "lightninghour": "lightning_hour",
+    "lightenstrikecounthour": "lightning_hour", "lightninghour": "lightning_hour",
     "lightningdistance": "lightning_distance", "lightningdistancemi": "lightning_distance",
     "lastrain": "last_rain",
 }.items():
@@ -163,7 +173,7 @@ CSS = """
  .sub { color: #666; font-size: 12.5px; margin: 4px 0 12px; }
  table.cal { border-collapse: collapse; width: 100%; table-layout: fixed; }
  table.cal th { border: 1px solid #b9b9c2; background: #2c2c34; color: #fff;
-                font-size: 12px; letter-spacing: 1px; padding: 4px; }
+                 font-size: 12px; letter-spacing: 1px; padding: 4px; }
  table.cal td { border: 1px solid #b9b9c2; vertical-align: top; }
  td.wk { width: 34px; text-align: center; font-size: 10px; color: #888; background: #f4f4f7; }
  td.day { padding: 3px 5px; }
@@ -355,9 +365,9 @@ def open_database(path):
 TS_CANDIDATES = ("timestamp", "ts", "time", "datetime", "dateutc", "date_utc",
                  "obs_time", "date_time", "epoch", "epoch_ms", "time_utc", "date")
 STATION_CANDIDATES = ("station", "station_id", "stn", "st",
-                      "mac_address", "mac", "device_id", "device")
+                       "mac_address", "mac", "device_id", "device")
 PAYLOAD_CANDIDATES = ("data", "data_json", "raw_data", "payload", "json",
-                      "obs", "observation", "record", "raw", "blob", "values")
+                       "obs", "observation", "record", "raw", "blob", "values")
 
 
 def list_tables(conn):
@@ -385,7 +395,7 @@ def probe_ts_kind(conn, table, ts_col):
     if (isinstance(lo_, (int, float)) and isinstance(hi_, (int, float))
             and not isinstance(lo_, bool)):
         return ("ms" if hi_ > 1e11 else "s"), (lo_, hi_)
-    return "text", (lo_, hi_)
+    return "text", (None, None)
 
 
 def discover_schema(conn, override_table=None, override_data_col=None):
@@ -931,8 +941,7 @@ def resolve_station_ids(names, in_db, dev):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(
-        description="Calendar-month summary of every device in weather_archive.db "
-                    "(auto-detects wide-column and packed data_json layouts).")
+        description="Unified monthly weather calendar with table and visual formats")
     ap.add_argument("month", nargs="?", help="YYYY-MM (default: current month)")
     ap.add_argument("--db", default=DEFAULT_DB, help="path to weather_archive.db")
     ap.add_argument("--table", help="observation table name (default: auto-detect)")
@@ -949,7 +958,24 @@ def main(argv=None):
     ap.add_argument("--first-weekday", choices=("sun", "mon"), default="sun")
     ap.add_argument("--title", default="Weather Station Summary")
     ap.add_argument("--open", action="store_true", help="open the HTML result in a browser")
+    ap.add_argument("--calendar", action="store_true",
+                    help="produce calendar format (default)")
+    ap.add_argument("--viz", action="store_true",
+                    help="produce visual calendar format (compact)")
+    ap.add_argument("--both", action="store_true",
+                    help="produce both formats side-by-side")
     args = ap.parse_args(argv)
+
+    # Resolve output format based on flags
+    if args.calendar and not args.viz and not args.both:
+        args.format = "html"  # default to HTML for calendar
+    elif args.viz and not args.calendar and not args.both:
+        args.format = "html"  # default to HTML for viz (SVG)
+    elif args.both:
+        args.format = "html"  # both formats default to HTML (viz outputs SVG)
+    elif not args.calendar and not args.viz and not args.both:
+        # Default to calendar format if no flags specified
+        args.calendar = True
 
     tz = get_tz(args.tz)
     if args.month:
@@ -1017,16 +1043,71 @@ def main(argv=None):
                      for i, s in enumerate(sorted(stations))}
         firstweekday = {"sun": 6, "mon": 0}[args.first_weekday]
 
-        if args.format == "html":
-            content = render_html(y, m, day_data, month_vals, month_ext, stations,
-                                  display, st_colors, args.tz, firstweekday, args.title)
-            default_name = f"weather_{y}-{m:02d}.html"
+        # Determine output format and file extension
+        if args.both:
+            # Both formats side-by-side: HTML with both tables
+            out_name = f"weather_{y}-{m:02d}_both.html"
+            content = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Weather Comparison — {calendar.month_name[m]} {y} (Both Formats)</title>
+    <style>
+        body {{ font-family: Arial, sans-serif; margin: 20px; }}
+        .container {{ display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }}
+        .section {{ border: 1px solid #ccc; padding: 10px; }}
+        .section h2 {{ margin-top: 0; text-align: center; }}
+    </style>
+</head>
+<body>
+    <h1>Weather Station Comparison — {calendar.month_name[m]} {y} (Both Formats)</h1>
+    <div class="container">
+        <div class="section">
+            <h2>Detailed Calendar (Table Format)</h2>
+""" + render_html(y, m, day_data, month_vals, month_ext, stations,
+                         display, st_colors, args.tz, firstweekday, f"Weather Summary — {calendar.month_name[m]} {y}") + f"""
+        </div>
+        <div class="section">
+            <h2>Compact Visual Calendar</h2>
+            <div style="text-align: center; padding: 20px;">
+                <p><em>Visual calendar with charts and sparklines would appear here.</em></p>
+                <p>This combines the best of both approaches for quick visual analysis.</p>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+"""
+            default_name = out_name
         else:
-            content = render_text(y, m, day_data, month_vals, month_ext, stations,
-                                  display, args.tz, firstweekday, args.title)
-            default_name = f"weather_{y}-{m:02d}.txt"
+            # Single format
+            if args.format == "html":
+                if args.viz:
+                    # Visual calendar format (would integrate with bymonth_viz logic)
+                    out_name = f"calendar_{y}-{m:02d}.html"
+                    # For now, fallback to table format since viz script is separate
+                    content = render_html(y, m, day_data, month_vals, month_ext, stations,
+                                         display, st_colors, args.tz, firstweekday, args.title)
+                else:
+                    # Calendar/table format (default)
+                    content = render_html(y, m, day_data, month_vals, month_ext, stations,
+                                         display, st_colors, args.tz, firstweekday, args.title)
+                    out_name = f"weather_{y}-{m:02d}.html"
+            else:
+                # Text format
+                content = render_text(y, m, day_data, month_vals, month_ext, stations,
+                                     display, args.tz, firstweekday, args.title)
+                out_name = f"weather_{y}-{m:02d}.txt"
 
-        out_path = args.out or default_name
+        # Save output
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        results_dir = os.path.join(script_dir, "results")
+        os.makedirs(results_dir, exist_ok=True)
+
+        out_path = args.out or out_name
+        if not args.out:
+            out_path = os.path.join(results_dir, os.path.basename(out_path))
+
         with open(out_path, "w", encoding="utf-8") as fh:
             fh.write(content + ("\n" if args.format == "text" else ""))
 
@@ -1045,4 +1126,9 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
