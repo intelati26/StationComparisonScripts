@@ -48,6 +48,11 @@ import matplotlib.dates as mdates
 import matplotlib.ticker as mticker
 from astral import Observer
 from astral.sun import sun
+import re
+
+def safe_filename(station):
+    """Make a station ID safe for filenames on Windows and in URLs."""
+    return re.sub(r'[<>:"/\\|?*\s]+', "_", station)
 
 try:
     from dotenv import load_dotenv
@@ -1631,7 +1636,7 @@ def main():
 
     timestamp_str = now_utc.strftime("%Y-%m-%d-%H-%M-%S")
     if station_filter:
-        out_path = f"results/{timestamp_str}_{'_'.join(station_filter)}.svg"
+        out_path = f"results/{timestamp_str}_{'_'.join(safe_filename(s) for s in station_filter)}.svg"
     else:
         out_path = f"results/{timestamp_str}.svg"
 

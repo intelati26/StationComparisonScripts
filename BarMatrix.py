@@ -49,6 +49,12 @@ def parse_args():
                    help="Number of bins for marginal histograms (default: 30)")
     p.add_argument("--contour-levels", type=int, default=8,
                    help="Number of contour levels for density (default: 8)")
+    p.add_argument("--declutter-temp", type=float, default=0.5,
+                   help="Clobber scatter points within this many °F of each "
+                        "other to reduce SVG size (0 disables, default: 0.5)")
+    p.add_argument("--declutter-hum", type=float, default=0.5,
+                   help="Clobber scatter points within this many %% RH of each "
+                        "other to reduce SVG size (0 disables, default: 0.5)")
     return p.parse_args()
 
 
@@ -84,6 +90,35 @@ def load_data(conn, station, start_time, end_time):
         return df
     df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
     return df
+
+
+def declutter_points(x, y, weight, x_bin, y_bin):
+    """Snap (x, y) to a fixed data-unit grid (e.g. 0.5°F x 0.5% RH) and
+    collapse points landing in the same cell, keeping the highest-weight
+    point per cell (it renders on top anyway). Cuts SVG element count/size
+    for dense scatters without visible precision loss, since the density
+    shading already communicates finer structure than individual points can.
+
+    Returns deduped x, y, weight arrays, plus per-cell occupancy counts.
+    """
+    if (x_bin <= 0 and y_bin <= 0) or len(x) == 0:
+        return x, y, weight, np.ones(len(x), dtype=np.int64)
+
+    x_bin = x_bin or 1e-9
+    y_bin = y_bin or 1e-9
+
+    ix = np.round(x / x_bin).astype(np.int64)
+    iy = np.round(y / y_bin).astype(np.int64)
+
+    df = pd.DataFrame({"x": x, "y": y, "w": weight, "ix": ix, "iy": iy})
+    grp = df.groupby(["ix", "iy"], sort=False)
+    idx = grp["w"].idxmax()  # keep densest point per cell
+    counts = grp.size().reindex(
+        pd.MultiIndex.from_arrays([df.loc[idx, "ix"], df.loc[idx, "iy"]])
+    ).values
+
+    out = df.loc[idx]
+    return out["x"].values, out["y"].values, out["w"].values, counts
 
 
 def compute_kde(x, y):
@@ -173,11 +208,21 @@ def build_matrix_plot(df, station, start_time, end_time, args):
         hums_sorted = hums
         dens_sorted = np.ones(len(temps))
 
+    # --- Declutter before rendering (marginal histograms below still use the
+    #     full, non-decluttered temps/hums arrays, so counts stay exact) ---
+    temps_plot, hums_plot, dens_plot, cell_counts = declutter_points(
+        temps_sorted, hums_sorted, dens_sorted,
+        x_bin=args.declutter_temp, y_bin=args.declutter_hum,
+    )
+    if len(temps_plot) < len(temps_sorted):
+        print(f"  Decluttered {len(temps_sorted)} -> {len(temps_plot)} scatter points "
+              f"({args.declutter_temp}°F x {args.declutter_hum}% RH grid)")
+
     # --- Main scatter (colored by density) ---
     scatter = ax_main.scatter(
-        temps_sorted, hums_sorted,
-        c=dens_sorted, cmap="plasma", s=12, alpha=0.6,
-        edgecolors="none", zorder=3,
+        temps_plot, hums_plot,
+        c=dens_plot, cmap="plasma", s=12, alpha=0.6,
+        marker="s", edgecolors="none", zorder=3,
     )
 
     # --- Contour overlay ---
