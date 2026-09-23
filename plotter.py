@@ -937,6 +937,18 @@ def main():
         print(f"  RTMA Analysis Frontier: {rtma_frontier.strftime('%Y-%m-%d %H:%M')} UTC "
               f"({rtma_age:.1f}h old)")
 
+    # --- ANALYSIS/MODEL REGIME BOUNDARY ---
+    # The newest analysis valid_time -- NOT "now" -- is where the plotted
+    # temperature stops being observation-based. RTMA for 18:00Z isn't
+    # published until ~18:40Z, so at 18:45Z everything after 18:00Z is
+    # HRRR in the cascade even though it's in the past. Splitting the
+    # line at now_utc labeled that HRRR stretch as observation analysis.
+    frontiers = [f for f in (urma_frontier, rtma_frontier) if f is not None]
+    analysis_frontier = max(frontiers) if frontiers else None
+    regime_split = analysis_frontier if analysis_frontier is not None else now_utc
+    print(f"  Model regime begins after: {regime_split.strftime('%Y-%m-%d %H:%M')} UTC"
+          + ("" if analysis_frontier is not None else " (no analysis in DB -- using now)"))
+
     if not pivoted_models.empty:
         print(f"\n  Model tier breakdown in DB:")
         for col in sorted(pivoted_models.columns, key=lambda c: -MODEL_TIER.get(c, -99)):
@@ -1042,9 +1054,15 @@ def main():
         ax1.axvline(now_utc, color="red", linestyle="-", linewidth=1.5,
                     alpha=0.6, label=f"Now ({now_utc.strftime('%H:%M')} UTC)")
         ax2.axvline(now_utc, color="red", linestyle="-", linewidth=1.5, alpha=0.6, zorder=11)
-        ax1.axvspan(now_utc, plot_end, color="purple", alpha=0.06, zorder=0)
-        ax2.axvspan(now_utc, plot_end, color="purple", alpha=0.06, zorder=0)
-        ax2.axvspan(now_utc, plot_end, hatch="///", facecolor="none",
+
+    # --- MODEL-REGIME SHADING ---
+    # Starts at the last analysis point (regime_split), not "now": between
+    # the RTMA frontier and now the cascade is already HRRR.
+    if regime_split <= plot_end:
+        shade_start = max(regime_split, cutoff)
+        ax1.axvspan(shade_start, plot_end, color="purple", alpha=0.06, zorder=0)
+        ax2.axvspan(shade_start, plot_end, color="purple", alpha=0.06, zorder=0)
+        ax2.axvspan(shade_start, plot_end, hatch="///", facecolor="none",
                     edgecolor="purple", alpha=0.3, zorder=0)
 
     # --- TOP PANEL: TEMPERATURE TIME SERIES ---
@@ -1105,19 +1123,21 @@ def main():
         sub_unified = model_for_bias.dropna()
         sub_unified = sub_unified[(sub_unified.index >= cutoff) & (sub_unified.index <= plot_end)]
         if not sub_unified.empty:
-            observed_mask = sub_unified.index <= now_utc
-            future_mask = sub_unified.index > now_utc
+            # Split at the analysis frontier, not now_utc (see regime_split).
+            # The frontier point is in both masks so the two segments join.
+            observed_mask = sub_unified.index <= regime_split
+            future_mask = sub_unified.index >= regime_split
 
             if observed_mask.any():
                 ax1.plot(sub_unified.index[observed_mask], sub_unified[observed_mask],
                          linestyle="--", linewidth=1.8,
-                         color="purple", label="Model (URMA->RTMA->HRRR Cascade)")
+                         color="purple", label="Analysis (URMA->RTMA)")
 
             if future_mask.any():
                 ax1.plot(sub_unified.index[future_mask], sub_unified[future_mask],
                          linestyle=":", linewidth=1.8, marker="o", markersize=4,
                          color="purple", alpha=0.7,
-                         label="HRRR Forecast (future hours)")
+                         label="HRRR model (after analysis frontier)")
 
             if not sd_for_bias.empty:
                 sub_sd = sd_for_bias.reindex(sub_unified.index)
