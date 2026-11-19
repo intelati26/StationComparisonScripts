@@ -792,6 +792,16 @@ def _cleanup_grib_cache(H):
 
 
 def try_model_extraction(target_time, model_key, fxx, lat, lon):
+    # inside the tier: the web API first (api_download.py), the GRIB download when it has nothing for this hour
+    try:
+        from api_download import extract as _api_extract
+        api_result = _api_extract(model_key, target_time, lat, lon)
+    except Exception as e:
+        print(f"    {model_key}: API download failed ({e}); using GRIB")
+        api_result = None
+    if api_result is not None and api_result[0] is not None:
+        return api_result
+
     if (model_key.startswith("hrrr_f") or model_key.startswith("rrfs_f")) \
             and fxx > 0:
         cycle_time = target_time - timedelta(hours=fxx)

@@ -63,6 +63,13 @@ python collect_models.py --force
 python collect_urma.py --force
 ```
 
+### Web API downloads (optional)
+Inside each tier the point value is tried from a web API before the GRIB download; when the API has nothing for the hour, fails, or is out of quota, the GRIB download runs as before. The tiers and their order are unchanged.
+- `urma`, `rtma` — [GribStream](https://gribstream.com) (`GRIBSTREAM_TOKEN`; 4 credits per hour, free plan 1200 a day). Same values as the GRIB files.
+- `hrrr_fNN`, `rrfs_fNN` — [Open-Meteo](https://open-meteo.com) (no key); its newest run for that hour. Set `WEATHER_ELEVATION_FT` so it does not adjust temperature to its own terrain height.
+- The APIs give no 3x3 stencil spread (`temp_sd`) or precipitation; those stay empty on API rows.
+- `WEATHER_API_DOWNLOADS=off` disables it, or `gribstream` / `openmeteo` picks one. Both services receive the station's latitude and longitude.
+
 ### Advanced Usage
 ```bash
 # Use a different database file
