@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Tonight: 925 mb wind and the low</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--ink:#1d232b;--mute:#5b6572;--line:#d9dee5;--acc:#1f5fbf;--warn:#b4531a}
+@media (prefers-color-scheme:dark){:root{--bg:#14181d;--card:#1c2229;--ink:#e6ebf0;--mute:#9aa6b2;--line:#2c353f;--acc:#6aa2ff;--warn:#ef9a5b}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,sans-serif}
+main{max-width:980px;margin:0 auto;padding:16px}h1{font-size:20px;margin:4px 0 2px}p.sub{margin:0 0 12px;color:var(--mute)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:12px}
+img{width:100%;height:auto;display:block;border-radius:6px;min-height:80px}
+.row{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin-top:10px}
+.k{font-size:12px;color:var(--mute)}.v{font-size:20px;font-weight:600}.warn{color:var(--warn)}
+input[type=range]{width:100%}.ticks{display:flex;justify-content:space-between;font-size:12px;color:var(--mute)}
+button,select,input[type=number]{background:var(--card);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:6px 10px;font:inherit}
+button{cursor:pointer}button.on{border-color:var(--acc);color:var(--acc)}
+.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}input[type=number]{width:110px}
+#msg{color:var(--warn);font-size:13px;min-height:18px}
+</style></head><body><main>
+<h1>Tonight: 925 mb wind and the low</h1>
+<p class="sub">Every picture is loaded live from NCEP MAG or SPC, and the numbers from Open-Meteo, so the page is reusable on any night. No place is stored in the file.</p>
+
+<div class="card">
+ <div class="bar">
+  <label>lat <input id="lat" type="number" step="0.1" placeholder="e.g. 39.0"></label>
+  <label>lon <input id="lon" type="number" step="0.1" placeholder="e.g. -98.0"></label>
+  <button id="here">use my location</button>
+  <label>site <select id="amp"><option value="5">typical (5 F)</option><option value="10">cold-prone hollow (10 F)</option><option value="3">flat, open (3 F)</option></select></label>
+  <label>dewpoint off <input id="tdadj" type="number" step="0.5" style="width:70px"> F</label>
+  <button id="go">go</button>
+ </div>
+ <div class="k" style="margin-top:6px">Coordinates are rounded to one decimal (about 10 km) before they go to Open-Meteo, and are kept only in this browser (localStorage). The pictures carry no location.</div>
+ <div id="msg"></div>
+</div>
+
+<div class="card">
+ <div class="bar" id="sources"></div>
+ <div class="bar" style="margin-top:8px"><button id="prev">&larr;</button><input id="s" type="range" min="0" max="0" value="0"><button id="next">&rarr;</button></div>
+ <div class="ticks" id="ticks"></div>
+</div>
+
+<div class="card"><img id="map" alt="map">
+ <div class="k" id="mapnote" style="margin-top:6px"></div>
+ <div class="row">
+  <div><div class="k">valid</div><div class="v" id="t">-</div></div>
+  <div><div class="k">forecast temperature</div><div class="v" id="temp">-</div></div>
+  <div><div class="k">cloud</div><div class="v" id="cloud">-</div></div>
+  <div><div class="k">925 mb wind at the site</div><div class="v" id="u925">-</div></div>
+  <div><div class="k">equation's drop / predicted</div><div class="v" id="drop">-</div></div>
+ </div>
+</div>
+
+<div class="card"><div class="k">925 mb wind at the site by hour (mph). The equation's wind term halves near 25 mph and is nearly gone by 35 mph.</div><svg id="chart" viewBox="0 0 700 150" width="100%"></svg></div>
+<div class="card" id="summary"><div class="k">Set a place and press go for the low.</div></div>
+
+<p class="sub">The equation: drop = amplitude x night x exp(-(U925/30 mph)^3) x (1 - 0.8 x cloud) x min(1, (T - Td)/12 F), with T, Td, cloud and wind from the HRRR (GFS outside the US) and the dewpoint corrected 1 F (Jun-Aug), 3 F (Sep-Nov) or 2 F. Amplitude 5 F is the typical site of 29 compared; 10 F is a cold-prone hollow. See EQUATION.md.</p>
+</main>
+
+<script>
+// ---------- core: the equation and the run/hour arithmetic (no DOM, so it can be tested outside a browser) ----------
+const Core = (() => {
+  const H = 3600e3;
+  // RAP run on MAG: the path holds no date, so the newest run is worked out from the clock (a run is on the site about 55 minutes after its hour)
+  function latestRun(nowMs, back) {
+    const t = Math.floor((nowMs - 60 * 60e3) / H) * H - (back || 0) * H;
+    return { ms: t, hh: String(new Date(t).getUTCHours()).padStart(2, "0") };
+  }
+  // the valid times to scroll through: 00Z..12Z of "tonight" in 2 h steps (UTC hour 13-23: the coming 00Z; before that, from the next even hour)
+  function tonight(nowMs) {
+    const d = new Date(nowMs), h = d.getUTCHours();
+    const day = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+    let start = h >= 13 ? day + 24 * H : Math.max(day, Math.ceil(nowMs / (2 * H)) * 2 * H);
+    const end = (h >= 13 ? day + 24 * H : day) + 12 * H;
+    const out = [];
+    for (let t = start; t <= end; t += 2 * H) out.push(t);
+    return out;
+  }
+  function night(t, sun) {                       // 0 by day, ramp over 2 h after sunset, 1 until sunrise, ramp down over 2 h
+    for (let i = 0; i + 1 < sun.length; i++) {
+      const sett = sun[i].set, nxt = sun[i + 1].rise;
+      if (t >= sett && t < nxt + 2 * H) {
+        if (t < sett + 2 * H) return (t - sett) / (2 * H);
+        return t < nxt ? 1 : 1 - (t - nxt) / (2 * H);
+      }
+    }
+    return 0;
+  }
+  function tdAdjust(month) { return month >= 6 && month <= 8 ? 1 : (month >= 9 && month <= 11 ? 3 : 2); }
+  function drop(amp, nightF, u925, cloud, temp, td) {
+    return amp * nightF * Math.exp(-Math.pow(u925 / 30, 3)) * (1 - 0.8 * cloud / 100) * Math.min(1, Math.max(0, temp - td) / 12);
+  }
+  function parse(d) {                             // Open-Meteo answer (timezone=UTC) -> hourly rows and sun times in ms
+    const h = d.hourly;
+    const rows = h.time.map((t, i) => ({ t: Date.parse(t + "Z"), temp: h.temperature_2m[i], td: h.dew_point_2m[i], cloud: h.cloud_cover[i], u: h.wind_speed_925hPa[i] }));
+    const sun = d.daily.time.map((_, i) => ({ rise: Date.parse(d.daily.sunrise[i] + "Z"), set: Date.parse(d.daily.sunset[i] + "Z") }));
+    return { rows, sun };
+  }
+  function evaluate(parsed, amp, adj, nowMs) {
+    const out = [];
+    for (const r of parsed.rows) {
+      if (r.t < nowMs - H) continue;
+      const n = night(r.t, parsed.sun);
+      if (n <= 0 || [r.temp, r.td, r.cloud, r.u].some(v => v == null)) continue;
+      const td = r.td - adj, dr = drop(amp, n, r.u, r.cloud, r.temp, td);
+      out.push({ t: r.t, temp: r.temp, td, cloud: r.cloud, u: r.u, drop: dr, pred: r.temp - dr });
+    }
+    if (!out.length) return null;
+    const first = out[0].t;                       // the first night only
+    return out.filter(r => r.t < first + 16 * H);
+  }
+  function summary(night) {
+    const fl = night.reduce((a, b) => b.temp < a.temp ? b : a), pl = night.reduce((a, b) => b.pred < a.pred ? b : a);
+    const cloud = night.reduce((s, r) => s + r.cloud, 0) / night.length, umax = Math.max(...night.map(r => r.u)), tdEve = night[0].td;
+    let rule, why;
+    if (cloud < 20 && umax < 20) { rule = Math.min(fl.temp, tdEve - 4); why = "clear and calm: the evening dewpoint less 4 F, or the forecast low if that is lower"; }
+    else if (umax >= 30 || cloud >= 60) { rule = fl.temp - 1; why = "cloudy or breezy aloft: the forecast low less 1 F"; }
+    else { rule = fl.temp - 3; why = "in between: the forecast low less 3 F"; }
+    return { fl, pl, cloud, umax, tdEve, rule, why };
+  }
+  return { latestRun, tonight, night, tdAdjust, drop, parse, evaluate, summary };
+})();
+if (typeof module !== "undefined") module.exports = Core;
+</script>
+
+<script>
+if (typeof document !== "undefined") (() => {
+  const $ = id => document.getElementById(id), H = 3600e3;
+  const SOURCES = [
+    { id: "rap925", label: "MAG: RAP13, 925 mb", type: "mag", param: "925_temp_ht", note: "NCEP MAG, RAP13 (13 km), CONUS: heights, temperature (C) and wind (kt)" },
+    { id: "rap850", label: "MAG: RAP13, 850 mb", type: "mag", param: "850_temp_ht", note: "NCEP MAG, RAP13, 850 mb: heights, temperature and wind" },
+    { id: "s14", label: "SPC analysis, S14 Central Plains", type: "spc", sector: "s14", note: "SPC mesoanalysis, 925 mb, valid now (an analysis, not a forecast): heights, temperature, dewpoint, wind" },
+    { id: "s20", label: "SPC analysis, S20 Midwest", type: "spc", sector: "s20", note: "SPC mesoanalysis, 925 mb, valid now (an analysis, not a forecast)" }
+  ];
+  let src = SOURCES[0], times = [], k = 0, back = 0, night = null;
+  const z = ms => String(new Date(ms).getUTCHours()).padStart(2, "0") + "Z";
+  const local = ms => new Date(ms).toLocaleString([], { weekday: "short", hour: "numeric" });
+
+  function mapUrl(ms) {
+    if (src.type === "spc") return `https://www.spc.noaa.gov/exper/mesoanalysis/${src.sector}/925mb/925mb.gif?${Math.floor(Date.now() / 600e3)}`;
+    const run = Core.latestRun(Date.now(), back), lead = Math.round((ms - run.ms) / H);
+    if (lead < 0 || lead > 21) return null;
+    return { url: `https://mag.ncep.noaa.gov/data/rap/${run.hh}/rap_conus_${String(lead).padStart(3, "0")}_${src.param}.gif`, run, lead };
+  }
+  function show(i) {
+    k = Math.max(0, Math.min(times.length - 1, i)); $("s").value = k;
+    const ms = times[k], img = $("map"), m = mapUrl(ms);
+    $("msg").textContent = "";
+    if (src.type === "spc") { img.src = m; $("mapnote").textContent = src.note; }
+    else if (!m) { img.removeAttribute("src"); $("mapnote").textContent = "this hour is outside the RAP run's 21 hours"; }
+    else { img.src = m.url; $("mapnote").textContent = `${src.note}. Run ${m.run.hh}Z, forecast hour ${m.lead}.`; }
+    $("t").textContent = z(ms) + " (" + local(ms) + ")";
+    const r = night && night.find(x => x.t === ms);
+    $("temp").textContent = r ? Math.round(r.temp) + " F" : "-";
+    $("cloud").textContent = r ? Math.round(r.cloud) + "%" : "-";
+    const u = $("u925"); u.textContent = r ? Math.round(r.u) + " mph" : "-"; u.className = "v" + (r && r.u >= 30 ? " warn" : "");
+    $("drop").textContent = r ? r.drop.toFixed(1) + " F / " + Math.round(r.pred) + " F" : "-";
+  }
+  $("map").onerror = () => {                     // the run is not on the site yet (or is stale): try the one before
+    if (src.type === "mag" && back < 3) { back++; show(k); }
+    else $("msg").textContent = "the picture did not load (the site may be down or the run not out yet)";
+  };
+  function buildSources() {
+    const bar = $("sources"); bar.innerHTML = "";
+    SOURCES.forEach(s => { const b = document.createElement("button"); b.textContent = s.label; b.className = s === src ? "on" : ""; b.onclick = () => { src = s; back = 0; buildSources(); show(k); }; bar.appendChild(b); });
+  }
+  function chart(rows) {
+    const W = 700, Hh = 150, x = (ms) => 30 + (ms - times[0]) / (times[times.length - 1] - times[0] || 1) * (W - 50), y = v => Hh - 20 - v * (Hh - 35) / 45;
+    let s = "";
+    for (const v of [0, 10, 20, 30, 40]) s += `<line x1="30" x2="${W - 20}" y1="${y(v)}" y2="${y(v)}" stroke="currentColor" opacity=".15"/><text x="2" y="${y(v) + 4}" font-size="10" fill="currentColor" opacity=".6">${v}</text>`;
+    s += `<line x1="30" x2="${W - 20}" y1="${y(30)}" y2="${y(30)}" stroke="#b4531a" stroke-dasharray="4 3"/>`;
+    const pts = rows.filter(r => r.t >= times[0] && r.t <= times[times.length - 1]).map(r => x(r.t) + "," + y(r.u)).join(" ");
+    s += `<polyline fill="none" stroke="#1f5fbf" stroke-width="2.5" points="${pts}"/>`;
+    times.forEach(ms => { s += `<text x="${x(ms) - 8}" y="${Hh - 4}" font-size="10" fill="currentColor" opacity=".7">${z(ms)}</text>`; });
+    $("chart").innerHTML = s;
+  }
+  async function go() {
+    const lat = parseFloat($("lat").value), lon = parseFloat($("lon").value);
+    if (isNaN(lat) || isNaN(lon)) { $("msg").textContent = "enter a latitude and longitude"; return; }
+    try { localStorage.setItem("tonight.loc", JSON.stringify({ lat, lon, amp: $("amp").value, adj: $("tdadj").value })); } catch (e) {}
+    const q = m => `https://api.open-meteo.com/v1/forecast?latitude=${lat.toFixed(1)}&longitude=${lon.toFixed(1)}&models=${m}&timezone=UTC&forecast_days=3&temperature_unit=fahrenheit&wind_speed_unit=mph&hourly=temperature_2m,dew_point_2m,cloud_cover,wind_speed_925hPa&daily=sunrise,sunset`;
+    let d = null;
+    for (const m of ["ncep_hrrr_conus", "gfs_seamless"]) {
+      try { const r = await fetch(q(m)); const j = await r.json(); if (j.hourly && j.hourly.wind_speed_925hPa.some(v => v != null) && j.hourly.temperature_2m.some(v => v != null)) { d = j; break; } } catch (e) {}
+    }
+    if (!d) { $("msg").textContent = "Open-Meteo did not answer"; return; }
+    const parsed = Core.parse(d), now = Date.now(), adj = parseFloat($("tdadj").value);
+    night = Core.evaluate(parsed, parseFloat($("amp").value), isNaN(adj) ? Core.tdAdjust(new Date().getMonth() + 1) : adj, now);
+    chart(parsed.rows);
+    if (!night) { $("summary").innerHTML = '<div class="k">no night hours in the forecast yet</div>'; return; }
+    const s = Core.summary(night), t = ms => new Date(ms).toLocaleString([], { weekday: "short", hour: "numeric" });
+    $("summary").innerHTML = `<div class="v">forecast low ${Math.round(s.fl.temp)} F at ${t(s.fl.t)} &nbsp; equation ${Math.round(s.pl.pred)} F at ${t(s.pl.t)} &nbsp; mental rule ${Math.round(s.rule)} F</div><div class="k">${s.why}. Night: cloud ${Math.round(s.cloud)}%, 925 mb wind up to ${Math.round(s.umax)} mph, dewpoint ${Math.round(s.tdEve)} F after the correction.</div>`;
+    show(k);
+  }
+  times = Core.tonight(Date.now());
+  $("s").max = times.length - 1;
+  times.forEach(ms => { const sp = document.createElement("span"); sp.textContent = z(ms); $("ticks").appendChild(sp); });
+  $("tdadj").value = Core.tdAdjust(new Date().getMonth() + 1);
+  try { const sv = JSON.parse(localStorage.getItem("tonight.loc") || "null"); if (sv) { $("lat").value = sv.lat; $("lon").value = sv.lon; $("amp").value = sv.amp; if (sv.adj) $("tdadj").value = sv.adj; } } catch (e) {}
+  $("go").onclick = go; $("here").onclick = () => navigator.geolocation && navigator.geolocation.getCurrentPosition(p => { $("lat").value = p.coords.latitude.toFixed(1); $("lon").value = p.coords.longitude.toFixed(1); go(); }, () => { $("msg").textContent = "location not available"; });
+  $("s").oninput = e => show(+e.target.value); $("prev").onclick = () => show(k - 1); $("next").onclick = () => show(k + 1);
+  addEventListener("keydown", e => { if (e.key === "ArrowRight") show(k + 1); if (e.key === "ArrowLeft") show(k - 1); });
+  buildSources(); show(0);
+  if ($("lat").value && $("lon").value) go();
+})();
+</script></body></html>

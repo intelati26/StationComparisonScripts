@@ -2,3 +2,7 @@
 log/
 __pycache__/
 *.db
+*.db-*
+reference/
+maps/*.png
+maps/spc925/
