@@ -16,6 +16,9 @@ Set of scripts to compare a personal weather station to observations/other stati
 - `collect_stations.py` — Fetch NWS station obs (KSGF, KBBG) and Ambient Weather obs
 - `collect_urma.py` — Gold-standard URMA/RTMA sweep with deep backfill and anomaly repair
 
+### Forecasting
+- `hyperlocal/coldpool.py` — Valley cold-air-pool low-temperature prediction, fitted to the database (see `hyperlocal/README.md`)
+
 ### Shared Library
 - `weather_common.py` — Common utilities for database operations, data fetching, and parsing
 
