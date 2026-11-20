@@ -908,7 +908,7 @@ def main():
         if "coldpool" in pivoted_sd.columns:
             pivoted_sd = pivoted_sd.drop(columns=["coldpool"])
 
-    # --- ADJUSTED FORECAST (optional: model "coldpool_fc" rows, written by hyperlocal/analysis/forecast_to_db.py) ---
+    # --- ADJUSTED FORECAST (optional: model "coldpool_fc" rows, written by hyperlocal/forecast_to_db.py) ---
     # The forecast temperature minus the equation's drop, one row per hour of tonight; temp_sd holds the SD of the predicted low. Drawn as its own dashed line, never mixed into the cascade.
     fc_series = fc_sd = None
     if "coldpool_fc" in pivoted_models.columns:
