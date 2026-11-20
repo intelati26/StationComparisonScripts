@@ -39,17 +39,21 @@ def fit(train):                                  # everything the models need, f
     hi = t[t.el >= 25]; r = hi.kt / cal(hi.el); td0 = float(hi.td.median()); bco = float(np.polyfit(hi.td - td0, r, 1)[0])      # relative change of the ceiling per F of dewpoint
     k0 = float(np.median(hi.sr / hi.solis0)); k1 = float(np.median(hi.sr / hi.solis1))
     return cal, td0, bco, k0, k1
-out = []
+out = []; folds = []
 for m in sorted(u.month.unique()):
     te = u[u.month == m]; tr = u[u.month != m]
     if tr.clear.sum() < 200 or len(te) == 0: continue
-    cal, td0, bco, k0, k1 = fit(tr); d = te.copy()
+    cal, td0, bco, k0, k1 = fit(tr); folds.append((str(m), td0, bco)); d = te.copy()
     d["A"] = d.haur; d["B"] = d.haur * cal(d.el); d["C"] = d.B * (1 + bco * (d.td - td0)); d["D0"] = k0 * d.solis0; d["D1"] = k1 * d.solis1; out.append(d)
 r = pd.concat(out); M = ["A", "B", "C", "D0", "D1"]
 LAB = {"A": "A raw Haurwitz", "B": "B calibrated, no humidity", "C": "C calibrated + dewpoint term", "D0": "D0 physical x factor, vapour fixed", "D1": "D1 physical x factor, vapour from T and RH"}
 for mname in M: r["r_" + mname] = r.sr / r[mname].clip(lower=5)
 cl = r[r.clear & (r.el >= 15)]
 print(f"{r.day.nunique()} days, {int(days.clear.sum())} clear; each month scored with a fit from the other months.\n")
+_cal, _td0, _bco, _k0, _k1 = fit(u)
+print(f"THE ADJUSTMENT (fit on all months): clear_sky(reading) = table(sun elevation) x (1 + {_bco:+.5f} x (dewpoint F - {_td0:.1f}))   i.e. {_bco*10*100:+.2f}% per +10 F of dewpoint")
+print(f"  across the {len(folds)} leave-one-month-out fits: coefficient {min(f[2] for f in folds):+.5f} to {max(f[2] for f in folds):+.5f}, reference dewpoint {min(f[1] for f in folds):.1f} to {max(f[1] for f in folds):.1f} F")
+print("  e.g. the ceiling is x" + ", x".join(f"{1 + _bco * (td - _td0):.3f} at a {td} F dewpoint" for td in (10, 30, 50, 70)) + "\n")
 print("CLEAR days, readings with the sun 15+ degrees up: measured / clear-sky model (1.00 = on the line)")
 print(f"{'model':<44}{'median':>7}{'10%':>7}{'90%':>7}{'mean abs err':>14}{'abs err W/m2':>14}")
 for mname in M:
