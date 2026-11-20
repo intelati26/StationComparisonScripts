@@ -5,7 +5,7 @@
  3 alternative forms of the cloud and dryness terms"""
 import json, math, os, sys, statistics as st
 from datetime import timedelta
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import coldpool as c
 
 cfg = c.load_config()

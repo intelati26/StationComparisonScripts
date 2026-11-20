@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """URMA (temperature F, cloud %, wind mph) at one point for the night hours of 1 Oct - 18 Nov, from the AWS GRIB files (free): log/urma_<name>.json, resumable.
-  python urma_site.py NAME LAT LON
+  python urma_site.py NAME LAT LON [START END]      (START, END as YYYY-MM-DD: another window, e.g. a season, added to the same file)
 """
 import json, sys, time
-sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.abspath(__file__)))
+sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.dirname(__import__("os").path.abspath(__file__))))
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -14,9 +14,10 @@ c.load_env()
 cfg = {"lat": lat, "lon": lon}
 f = c.LOG / f"urma_{name}.json"
 have = json.loads(f.read_text()) if f.exists() else {}
-t = datetime(2026, 10, 1, tzinfo=timezone.utc)
+t = datetime.fromisoformat(sys.argv[4]).replace(tzinfo=timezone.utc) if len(sys.argv) > 5 else datetime(2026, 10, 1, tzinfo=timezone.utc)
+end = datetime.fromisoformat(sys.argv[5]).replace(tzinfo=timezone.utc) + timedelta(hours=14) if len(sys.argv) > 5 else datetime(2026, 11, 19, 14, tzinfo=timezone.utc)
 hours = []
-while t < datetime(2026, 11, 19, 14, tzinfo=timezone.utc):
+while t < end:
     if c.night_factor(t, lat, lon) >= 1.0 and t.isoformat() not in have:
         hours.append(t)
     t += timedelta(hours=1)

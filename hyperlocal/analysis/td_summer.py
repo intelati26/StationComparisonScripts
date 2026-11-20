@@ -3,7 +3,7 @@
 import json, os, statistics as st, sys, time
 from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import coldpool as c
 
 c.load_env()

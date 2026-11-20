@@ -1,6 +1,6 @@
 # Research notes: cold-air drainage and pooling
 
-Kept with the single-site cold-pool work (`coldpool.py`, `terrain.py`, `terrain_local.py`). Written 2026-11-19 from web search results
+Kept with the single-site cold-pool work (`coldpool.py`, `analysis/terrain.py`, `analysis/terrain_local.py`). Written 2026-11-19 from web search results
 and their summaries: **the papers themselves have not been read**, so every claim below is as far as a search result's
 abstract or summary goes. Before citing one, open it. Nothing here is a number the model depends on.
 
@@ -48,7 +48,7 @@ Finding (first place, around the home station, 6 distinct WU sites plus the stat
   features control local cooling. All three appear in the sources above.
 - **Not established by them:** the specific measure. "Distance to a channel from D8 flow accumulation of 5 ha or more" is our own
   construction (the literature uses slope position / TPI, cold-air-drainage indices, topographic amplification factors). Seven sites, twelve
-  indices tried, one chosen: that is a hint, not a result. The second place (Pittsburg / Frontenac, KS, 37.5 -94.7) is the
+  indices tried, one chosen: that is a hint, not a result. The second place (place B, a random one-decimal point) is the
   test, with the two indices fixed beforehand.
 - **To try next, from the literature:** slope position / TPI at several radii (done), plan and profile curvature (concave vs convex),
   a topographic amplification factor for the valley the site sits in, and a valley-scale term alongside the local one (the Bayreuth caution).
@@ -80,7 +80,7 @@ Its citations were not checked against the originals, and its "interactive model
 
 ## Our data: which wind controls the deficit (single site, 50 nights, 533 night hours; 2026-11-19)
 
-Scripts: `wind_check.py`, `check_equation.py`, `hrrr_leads.py`. Deficit = URMA 2 m temperature minus the station's; the rest of the equation as fitted
+Scripts: `analysis/wind_check.py`, `analysis/check_equation.py`, `analysis/hrrr_leads.py`. Deficit = URMA 2 m temperature minus the station's; the rest of the equation as fitted
 (cloud weight 0.8, dewpoint spread scale 12 F). Cross-validated = leave-one-night-out.
 
 - **Response curve is a threshold.** Clear hours, deficit / what the other terms predict, against URMA 10 m wind: about 1.0 up to 6 mph, 0.78 at 6-8,
@@ -94,28 +94,28 @@ Scripts: `wind_check.py`, `check_equation.py`, `hrrr_leads.py`. Deficit = URMA 2
 - **Caveat that matters (the user's point: HRRR runs every hour).** That 925 hPa series comes from Open-Meteo's historical-forecast API, which stitches the first hours of
   each hourly run: it is effectively HRRR's analysis, not a forecast at a lead. For a forecast made in the evening the wind comes from the latest run at a lead of
   1-15 h, so 1.68 F is an upper bound. Test under way: the 22Z run's 925 hPa wind at leads 0-15 h for each night, from NOAA's HRRR archive on AWS
-  (`hrrr_leads.py`, `log/hrrr925_run22.json`), refitted with the same 3 h maximum. Results to be added here.
+  (`analysis/hrrr_leads.py`, `log/hrrr925_run22.json`), refitted with the same 3 h maximum. Results to be added here.
 - Six wind variants were compared on one site: some of the gain may be selection even though cross-validated. Not yet adopted in the model.
 
 ## Second place: the channel-distance finding did not replicate (2026-11-19)
 
-Test: Pittsburg / Frontenac, Kansas (random one-decimal point 37.5, -94.7), 8 Weather Underground stations 3-10 km from the centre, station minus URMA at the centre on that
-place's clear, calm nights (22 nights, URMA cloud < 20% and the stations' mean wind < 1 mph), indices from 3DEP 8 m terrain (`terrain_local.py`, `site_analysis.py`). The two indices fixed beforehand were distance to channel and relative position within 500 m.
+Test: place B (a random one-decimal point), 8 Weather Underground stations 3-10 km from the centre, station minus URMA at the centre on that
+place's clear, calm nights (22 nights, URMA cloud < 20% and the stations' mean wind < 1 mph), indices from 3DEP 8 m terrain (`analysis/terrain_local.py`, `analysis/site_analysis.py`). The two indices fixed beforehand were distance to channel and relative position within 500 m.
 
-| index (correlation with how warm the site runs vs URMA) | Home, 6 sites | Pittsburg, 8 sites | pooled, 14 (each place re-centred) |
+| index (correlation with how warm the site runs vs URMA) | Home, 6 sites | place B, 8 sites | pooled, 14 (each place re-centred) |
 |---|---|---|---|
 | distance to channel (D8, 5 ha) | +0.89 | +0.11 | +0.34 |
 | relative position within 500 m | +0.77 | +0.42 | +0.53 |
 | TPI within 1 km | +0.49 | +0.50 | +0.40 |
 | area draining to the site | +0.26 | -0.52 | -0.30 |
 
-- **Channel distance does not carry over:** the three Pittsburg sites within 30 m of a channel are cold (-4.6, -3.2, -1.8 F), but another cold site (a station, -4.5 F) is 265 m from one on flat ground, and the warmest site (+2.0 F) is 66 m from one. The the home place +0.9 came from few sites and many indices tried.
-- **What both places share:** broad position. Sites lower than their surroundings within 1 km (TPI) and low within 500 m (relative position) run colder at both places, at +0.4 to +0.5 each, modest. Spread between stations 6.6 F at Pittsburg (about 9.8 F at the home place).
+- **Channel distance does not carry over:** the three place-B sites within 30 m of a channel are cold (-4.6, -3.2, -1.8 F), but another cold site (a station, -4.5 F) is 265 m from one on flat ground, and the warmest site (+2.0 F) is 66 m from one. The the home place +0.9 came from few sites and many indices tried.
+- **What both places share:** broad position. Sites lower than their surroundings within 1 km (TPI) and low within 500 m (relative position) run colder at both places, at +0.4 to +0.5 each, modest. Spread between stations 6.6 F at place B (about 9.8 F at the home place).
 - Not adopted in the model. More places would be needed for a regression (about 40 stations); sensor siting and shielding noise is not removable here.
 
 ## Snow nights at the station, and our numbers beside the studies (2026-11-19)
 
-**Snow test (`snow_nights.py`, `snow_effect.py`):** nights where the nearest airport reported snow in the previous 72 h and stayed at or below 40 F since:
+**Snow test (`analysis/snow_nights.py`, `analysis/snow_effect.py`):** nights where the nearest airport reported snow in the previous 72 h and stayed at or below 40 F since:
 9 nights in winter 2025-26 (1 Dec, 24-27 Jan, 30 Jan - 1 Feb, 15 Mar). Three of them (25, 27, 31 Jan) lost to station data gaps (2-4 hours of 14), leaving 6 nights.
 Deficit (URMA minus station) on those 6: 0.2, -0.2, 0.5, 0.6, 0.3, 0.7 F. None was both clear and calm: cloud 58-81% on three, URMA wind 9-18 mph on four, the clearest
 (26 Jan, 3% cloud) had 16 mph wind. The autumn equation overshoots by 0.9 F on average (worst 3.0 F on 1 Feb: 7% cloud, 9 mph wind, equation 3.3 F, actual 0.3 F).
@@ -136,12 +136,12 @@ Same order of magnitude throughout; the threshold agreement (about 5 m/s) is the
 
 ## Third place and leave-one-place-out (2026-11-19)
 
-Ozark / Highlandville / Spokane / Crane, Missouri (36.9, -93.3), 9 Wunderground stations, 26 clear and calm nights, spread between stations 6.4 F (coldest a station -4.9 F at 1,126 ft, warmest a station +1.5 F at 1,286 ft).
-The two indices fixed beforehand did not hold: channel distance +0.05, position within 500 m +0.11. Elevation +0.75 here (it was +0.50 at the home place, -0.05 at Pittsburg), TPI 1 km -0.17 (+0.49, +0.50).
+Place C (a random one-decimal point), 9 Wunderground stations, 26 clear and calm nights, spread between stations 6.4 F (coldest a station -4.9 F at 1,126 ft, warmest a station +1.5 F at 1,286 ft).
+The two indices fixed beforehand did not hold: channel distance +0.05, position within 500 m +0.11. Elevation +0.75 here (it was +0.50 at the home place, -0.05 at place B), TPI 1 km -0.17 (+0.49, +0.50).
 
-Slope per standard deviation (F) of how warm a site runs against URMA, by place, and the leave-one-place-out error (fit on two places, predict the third; rmse F; no model: home 3.03, Pittsburg 2.24, Ozark 1.99, mean 2.42):
+Slope per standard deviation (F) of how warm a site runs against URMA, by place, and the leave-one-place-out error (fit on two places, predict the third; rmse F; no model: home 3.03, place B 2.24, place C 1.99, mean 2.42):
 
-| index | Home | Pittsburg | Ozark | mean leave-one-place-out rmse |
+| index | Home | Place B | Place C | mean leave-one-place-out rmse |
 |---|---|---|---|---|
 | elevation | +0.95 | -0.12 | +1.51 | 2.43 |
 | TPI 1 km | +1.47 | +1.12 | -0.33 | 2.49 |
@@ -152,9 +152,9 @@ Slope per standard deviation (F) of how warm a site runs against URMA, by place,
 
 **No single terrain index beats "no model" across places** (best 2.38 F against 2.42 F; most worse); the signs change from place to place. The home-place hints (channel distance, TPI) were
 small-sample findings. Stations in one place differ by 6-10 F on clear, calm nights and the terrain indices here do not explain it; sensor siting and shielding, canopy and buildings are
-untested candidates. Elevation matters at the high-relief place (Ozark) as the drainage picture says.
+untested candidates. Elevation matters at the high-relief place (place C) as the drainage picture says.
 
-## The whole suite over 36 stations in five places (2026-11-20; `all_stations.py`)
+## The whole suite over 36 stations in five places (2026-11-20; `analysis/all_stations.py`)
 Analysis inputs (URMA temperature and cloud at the place's centre, the HRRR's wind about 450 m above its ground, each station's own hourly dewpoint), 1,640 station-nights, scored on each station's nightly low.
 Mean over stations of each station's mean absolute error (F) and how many stations improved on the forecast low alone:
 
@@ -167,16 +167,16 @@ Mean over stations of each station's mean absolute error (F) and how many statio
 | equation, amplitude predicted from terrain | 1.73 | 28 of 36 | +0.25 |
 | equation, own amplitude and offset | 1.13 | 32 of 36 | +0.15 |
 
-By place (forecast | typical 5 | own): home 2.99 | 2.29 | 1.96; Pittsburg 1.50 | 1.33 | 0.99; Ozark 2.26 | 1.63 | 1.35; Adrian 1.36 | 1.05 | 1.07; Blue Ridge valley 3.79 | 2.76 | 1.43.
-Appalachian place (7 stations, 650-1,101 m): the amplitude falls with station elevation, 12.9, 12.0, 10.6, 9.8, 4.4, -1.0, -2.0 F from the lowest to the highest (correlation -0.98 with elevation, about -3.8 F per 100 m, crossing zero near 1,015 m): valley floors pool, the higher stations sit in the warmer air above
+By place (forecast | typical 5 | own): home 2.99 | 2.29 | 1.96; place B 1.50 | 1.33 | 0.99; place C 2.26 | 1.63 | 1.35; place D 1.36 | 1.05 | 1.07; the mountain valley 3.79 | 2.76 | 1.43.
+Mountain valley place (7 stations, 650-1,101 m): the amplitude falls with station elevation, 12.9, 12.0, 10.6, 9.8, 4.4, -1.0, -2.0 F from the lowest to the highest (correlation -0.98 with elevation, about -3.8 F per 100 m, crossing zero near 1,015 m): valley floors pool, the higher stations sit in the warmer air above
 (a thermal belt) and the equation does not apply to them. In the lowlands, with 30-180 ft of relief, the same elevation signal was weak or absent. Wind height tested there (7 stations): all variants within 0.06 F (local 700 m 1.77, 850 hPa 1.78, 450 m 1.78, 925 hPa 1.82, 10 m 1.83).
 
-## Predicting a site's amplitude without its data (2026-11-20; `svf.py`, `all_stations.py`)
+## Predicting a site's amplitude without its data (2026-11-20; `analysis/svf.py`, `analysis/all_stations.py`)
 36 stations in five places, amplitude b = the station's own fit of (model - station) against the weather factor. Correlation within each place (re-centred) and pooled over the places:
 
 | predictor | what it showed |
 |---|---|
-| height above the valley floor (Blue Ridge valley, 7 stations, 450 m of relief) | -0.98, about -3.8 F per 100 m; the highest stations show no pooling at all. One valley only |
+| height above the valley floor (the mountain valley, 7 stations, 450 m of relief) | -0.98, about -3.8 F per 100 m; the highest stations show no pooling at all. One valley only |
 | the same in the lowlands (30-180 ft of relief) | weak or absent |
 | position within 500 m, TPI within 1 km | pooled about -0.55 (same sign in all four lowland places); predicting a held-out place helps at 14-15 of 29 sites, 90% range touching zero |
 | area draining to the site, distance to a channel (terrain or mapped) | mixed signs between places; not replicated |
@@ -184,4 +184,4 @@ Appalachian place (7 stations, 650-1,101 m): the amplitude falls with station el
 | obstruction height (30 m surface model minus the 8 m terrain, within 100-500 m) | pooled +0.05 to +0.19, signs mixed: no relation at this resolution |
 
 Not tested: trees and buildings from lidar points, land cover and impervious area, soil moisture and nearby water, the shielding and height of the sensor, the fetch in each direction (treeline), a valley topographic amplification factor.
-So: no dependable physical predictor of a site's amplitude from terrain alone apart from the large-relief rule; the typical 5 F or two weeks of the station's own data (`amp.py`) are the practical choices.
+So: no dependable physical predictor of a site's amplitude from terrain alone apart from the large-relief rule; the typical 5 F or two weeks of the station's own data (`analysis/amp.py`) are the practical choices.

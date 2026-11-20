@@ -8,7 +8,7 @@ night temperature minus URMA at the place's centre = a + b x factor(wind), the f
 Scored leave-one-night-out, summed over the stations."""
 import json, math, os, statistics as st, sys, urllib.parse, urllib.request
 from datetime import datetime, timedelta, timezone
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import coldpool as c, terrain as T
 
 name, clat, clon = sys.argv[1], float(sys.argv[2]), float(sys.argv[3])

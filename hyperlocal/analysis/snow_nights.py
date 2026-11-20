@@ -5,7 +5,7 @@ control    : no snow reported in the previous 7 days
 writes log/snow_nights_<airport>.json"""
 import csv, io, json, os, re, sys, urllib.parse, urllib.request
 from datetime import datetime, timedelta, timezone
-sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.abspath(__file__)))
+sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.dirname(__import__("os").path.abspath(__file__))))
 import coldpool as c
 
 ap = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("HOME_AIRPORT") or sys.exit("give the airport code (or set HOME_AIRPORT in .env)")

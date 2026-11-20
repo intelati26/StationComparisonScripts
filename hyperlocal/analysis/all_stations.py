@@ -4,13 +4,15 @@ For each station: its amplitude and offset (y = a + b x the weather factor), and
 an amplitude predicted from its terrain (position within 500 m, fitted on the other places), and with the amplitude and the offset.   python all_stations.py"""
 import json, math, os, re, statistics as st, sys, urllib.parse, urllib.request
 from datetime import datetime, timedelta, timezone
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import coldpool as c
 
 cfg = c.load_config()
 obs, mod = c.load_db(cfg)
 c.merge_cache(obs, mod)
-CENTERS = {"home": (cfg["lat"], cfg["lon"]), "pittsburg": (37.5, -94.7), "ozark": (36.9, -93.3), "adrian": (38.4, -94.3), "appal": (35.3, -83.1)}      # the home place comes from WEATHER_LAT / WEATHER_LON (.env), the others are random places
+import places
+PL = places.load(cfg)
+CENTERS = {k: (v["lat"], v["lon"]) for k, v in PL.items()}      # the home place comes from WEATHER_LAT / WEATHER_LON (.env), the others from log/places.json
 
 
 def wu(path, skip=()):
@@ -23,15 +25,15 @@ def wu(path, skip=()):
 
 
 HOME = json.load(open(c.LOG / "home_stations.json"))          # the home place's Wunderground ids live in log/ (not in the repo)
-P = {"home": (wu(c.LOG / "wu_hourly.json", tuple(HOME["skip"])), dict(mod)),
-     "pittsburg": (wu(c.LOG / "wu_hourly_pittsburg.json"), {datetime.fromisoformat(k): v for k, v in json.load(open(c.LOG / "urma_pittsburg.json")).items()}),
-     "ozark": (wu(c.LOG / "wu_hourly_ozark.json"), {datetime.fromisoformat(k): v for k, v in json.load(open(c.LOG / "urma_ozark.json")).items()}),
-     "adrian": (wu(c.LOG / "wu_hourly_adrian.json"), {datetime.fromisoformat(k): v for k, v in json.load(open(c.LOG / "urma_adrian.json")).items()})}
-import os as _os
-if _os.path.exists(c.LOG / "wu_hourly_appal.json") and _os.path.exists(c.LOG / "urma_appal.json"):
-    P["appal"] = (wu(c.LOG / "wu_hourly_appal.json"), {datetime.fromisoformat(k): v for k, v in json.load(open(c.LOG / "urma_appal.json")).items()})
-else:
-    CENTERS.pop("appal")
+P = {"home": (wu(c.LOG / "wu_hourly.json", tuple(HOME["skip"])), dict(mod))}
+for k, v in PL.items():
+    if k == "home":
+        continue
+    fw, fu = c.LOG / f"wu_hourly_{v['tag']}.json", c.LOG / f"urma_{v['tag']}.json"
+    if fw.exists() and fu.exists():
+        P[k] = (wu(fw), {datetime.fromisoformat(a): b for a, b in json.load(open(fu)).items()})
+    else:
+        CENTERS.pop(k)
 W925 = {}
 for p, (la, lo) in CENTERS.items():                        # the HRRR's wind about 450 m above its ground at the place's centre (one decimal is sent)
     ground, HR = c.hrrr_levels(la, lo, "2026-10-01", "2026-11-19")
@@ -65,14 +67,11 @@ print(len(rows), "stations,", sum(len(r["nights"]) for r in rows), "station-nigh
 IX = {}
 for s, cc, ix in json.load(open(c.LOG / "site_indices.json")):
     IX[HOME["home_wu_id"] if s == HOME["home_ambient"] else s] = ix["rel_500"]
-for s, cc, ix in json.load(open(c.LOG / "site_indices_pittsburg.json")):
-    IX[s] = ix["rel_500"]
-pat = r'(KMO\w+)\s+([\d.]+)\s+([+-][\d.]+)F\s+(\d+)\s+([\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)'
-for fn in ("bs4j1qnkq", "b68sai8jz"):
-    for l in open(f"/tmp/claude-1000/-home-mitch-Claude-wxqt-grib/a4e9b04b-0a49-4c19-bf35-c59108a251fa/tasks/{fn}.output").read().splitlines():
-        m = re.match(pat, l)
-        if m:
-            IX.setdefault(m.group(1), float(m.group(10)))
+for k, v in PL.items():
+    f = c.LOG / f"site_indices_{v['tag']}.json"
+    if k != "home" and f.exists():
+        for s, cc, ix in json.load(open(f)):
+            IX[s] = ix["rel_500"]
 byp = {p: [r for r in rows if r["place"] == p and r["sid"] in IX] for p in P}
 gm = st.mean(r["b"] for r in rows)
 for r in rows:

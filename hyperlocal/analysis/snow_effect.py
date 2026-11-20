@@ -4,7 +4,7 @@ Snow nights (the airport reported snow in the previous 72 h and stayed below 40 
 URMA at the station (AWS GRIB, free) and the station's own hourly data (Ambient, paged as StationComparisonScripts does)."""
 import json, math, os, random, statistics as st, sys, time
 from datetime import datetime, timedelta, timezone
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import coldpool as c
 from concurrent.futures import ThreadPoolExecutor
 

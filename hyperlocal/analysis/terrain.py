@@ -11,7 +11,7 @@ Needs the gdal command line tools (gdalbuildvrt, gdal_translate).
 import json, math, os, subprocess, sys, tempfile
 from pathlib import Path
 
-HERE = Path(__file__).parent
+HERE = Path(__file__).parent.parent
 BUCKET = "/vsicurl/https://copernicus-dem-30m.s3.amazonaws.com"
 FT = 3.28084
 DIRS = (("N", 0), ("NE", 45), ("E", 90), ("SE", 135), ("S", 180), ("SW", 225), ("W", 270), ("NW", 315))

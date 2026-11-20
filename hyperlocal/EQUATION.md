@@ -33,7 +33,7 @@ Predicting a held-out place's amplitudes from the other two helps at 13 of 23 si
 
 ## End to end, on real forecast inputs (45 nights, 1 Oct - 18 Nov 2026)
 
-Inputs from the 22Z NBM run (temperature, dewpoint, cloud) and the 22Z HRRR run (925 hPa wind), scored on the station's lowest hourly temperature each night (`end_to_end.py`).
+Inputs from the 22Z NBM run (temperature, dewpoint, cloud) and the 22Z HRRR run (925 hPa wind), scored on the station's lowest hourly temperature each night (`analysis/end_to_end.py`).
 
 | prediction | MAE | bias |
 |---|---|---|

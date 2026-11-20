@@ -7,7 +7,7 @@ import hashlib, os, sys, urllib.request
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 
-out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "maps", "spc925")
+out = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "maps", "spc925")
 os.makedirs(out, exist_ok=True)
 for sec in (sys.argv[1:] or ["s14"]):
     r = urllib.request.urlopen(f"https://www.spc.noaa.gov/exper/mesoanalysis/{sec}/925mb/925mb.gif", timeout=60)
