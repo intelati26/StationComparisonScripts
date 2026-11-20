@@ -9,4 +9,8 @@ img=""
 if [ -s "$json" ] && [ -f ~/low_plot.py ] && python -c "import matplotlib" 2>/dev/null; then
   img=$(python ~/low_plot.py --from "$json" 2>/dev/null | tail -1)
 fi
-termux-notification --id tonight --title "Tonight: $(echo "$out" | head -1)" --content "$(echo "$out" | tail -n +2)" ${img:+--image-path "$img"} 2>/dev/null
+act=()
+if [ -n "$img" ]; then            # tapping the notification (or its Picture button) opens the full-size image in the phone's image viewer
+  act=(--image-path "$img" --action "termux-open '$img'" --button1 "Picture" --button1-action "termux-open '$img'")
+fi
+termux-notification --id tonight --title "Tonight: $(echo "$out" | head -1)" --content "$(echo "$out" | tail -n +2)" "${act[@]}" 2>/dev/null
