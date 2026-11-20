@@ -11,6 +11,8 @@ import coldpool as c
 import pvlib
 
 ap = argparse.ArgumentParser(); ap.add_argument("--db"); ap.add_argument("--station", default="AMBIENT"); ap.add_argument("--csv"); ap.add_argument("--png"); ap.add_argument("--month", help="YYYY-MM for a small-multiples sheet of that month")
+ap.add_argument("--sheet", help="PNG: a sheet of NON-clear days (measured against the calibrated curve with and without the dewpoint adjustment), spread over the dewpoint range")
+ap.add_argument("--days", help="with --sheet: comma-separated dates (YYYY-MM-DD) instead of the automatic pick")
 a = ap.parse_args(); c.load_env(); cfg = c.load_config()
 db = a.db or os.environ.get("WEATHER_DB_PATH", "weather_archive.db"); lat, lon, alt = cfg["lat"], cfg["lon"], cfg["valley_elevation_ft"] * 0.3048
 q = ("SELECT timestamp, solar_radiation sr, dewpoint td, temperature t, relative_humidity rh FROM station_obs WHERE station=? AND solar_radiation IS NOT NULL AND solar_radiation>=0 "
@@ -94,3 +96,27 @@ if a.png:
     for m, col in (("B", "#d95926"), ("C", "#1f4fd8")): ax[1].hist(cl["r_" + m], bins=np.arange(0.5, 1.6, 0.02), alpha=.55, color=col, label=LAB[m])
     ax[1].axvline(1, color="gray", lw=.8); ax[1].set_xlabel("measured / model, every clear-day reading with the sun 15+ degrees up"); ax[1].set_ylabel("readings"); ax[1].legend(fontsize=8, frameon=False); ax[1].grid(alpha=.25)
     fig.tight_layout(); fig.savefig(a.png); print("figure ->", a.png)
+
+if a.sheet:
+    import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
+    r["local"] = r["time"] + pd.to_timedelta(lon / 15.0, unit="h"); r["ldate"] = r["local"].dt.date
+    daily = r.groupby("ldate").agg(td=("td", "mean"), n=("sr", "size"), kmean=("kt", "mean"), clear=("clear", "first"), eB=("B", "sum"), eC=("C", "sum"), eM=("sr", "sum"))
+    daily["cloudy_B"] = 1 - daily.eM / daily.eB; daily["cloudy_C"] = 1 - daily.eM / daily.eC
+    nc = daily[(~daily.clear) & (daily.n >= 40) & (daily.kmean.between(0.15, 0.55))].sort_values("td")
+    if a.days: pick = [pd.Timestamp(x).date() for x in a.days.split(",")]
+    else: pick = [nc.index[int(q * (len(nc) - 1))] for q in (0.04, 0.2, 0.4, 0.6, 0.8, 0.97)]
+    print("\nNON-clear days on the sheet: dewpoint, and the cloudiness each curve implies (1 - measured energy / clear-sky energy over the day):")
+    print(f"{'day':<12}{'dewpoint F':>11}{'cloudy, no humidity':>21}{'cloudy, dewpoint-adjusted':>27}{'difference':>12}")
+    fig, axs = plt.subplots(2, 3, figsize=(15, 7.2), dpi=120, sharey=False); axs = axs.ravel()
+    for ax_, day in zip(axs, pick):
+        g = r[r.ldate == day].sort_values("local"); dd = daily.loc[day]
+        ax_.plot(g.local.dt.hour + g.local.dt.minute / 60, g.sr, color="#ff8c00", lw=1.2, label="measured"); ax_.plot(g.local.dt.hour + g.local.dt.minute / 60, g.B, color="#d95926", lw=1.1, ls="--", label="clear-sky, no humidity")
+        ax_.plot(g.local.dt.hour + g.local.dt.minute / 60, g.C, color="#1f4fd8", lw=1.3, label="clear-sky, dewpoint-adjusted"); ax_.fill_between(g.local.dt.hour + g.local.dt.minute / 60, g.sr, g.C, where=g.C > g.sr, color="gray", alpha=.25)
+        ax_.set_title(f"{day}   dewpoint {dd.td:.0f} F   cloudy {dd.cloudy_C * 100:.0f}% (was {dd.cloudy_B * 100:.0f}%)", fontsize=9); ax_.grid(alpha=.25); ax_.set_xlabel("local solar hour"); ax_.set_ylabel("W/m^2")
+        print(f"{str(day):<12}{dd.td:>11.0f}{dd.cloudy_B * 100:>20.1f}%{dd.cloudy_C * 100:>26.1f}%{(dd.cloudy_C - dd.cloudy_B) * 100:>+11.1f}")
+    axs[0].legend(fontsize=7, frameon=False, loc="upper left"); fig.suptitle("Non-sunny days against the clear-sky line: the dewpoint adjustment moves the line most on the driest and wettest days (grey = what the clouds took)", fontsize=10)
+    fig.tight_layout(); fig.savefig(a.sheet); print("sheet ->", a.sheet)
+    print(f"\nOver all {len(nc)} partly cloudy days (kmean 0.15-0.55): the adjustment changes the implied cloudiness by {np.mean(np.abs(nc.cloudy_C - nc.cloudy_B)) * 100:.1f} points on average, up to {np.max(np.abs(nc.cloudy_C - nc.cloudy_B)) * 100:.1f}.")
+    for lo, hi in ((-20, 30), (30, 45), (45, 60), (60, 80)):
+        g = nc[(nc.td >= lo) & (nc.td < hi)]
+        if len(g): print(f"  dewpoint {lo:>3}-{hi:<3} F: {len(g):>3} days, mean change {(g.cloudy_C - g.cloudy_B).mean() * 100:+.1f} points")
