@@ -11,7 +11,7 @@ removing it made the leave-one-night-out error worse; everything else was tried 
 |---|---|---|---|
 | A | maximum drop | 10 F | the scale |
 | N(t) night | 0 by day; ramps 0 to 1 over the 2 h after sunset; 1 until sunrise; ramps down over 2 h | | structural: the effect exists only at night |
-| W wind | exp(-(U925 / 30 mph)^3), U925 = HRRR 925 hPa wind of the latest run | threshold about 30 mph aloft | 2.37 F without any wind term; 1.71 F with the 925 hPa forecast wind against 1.89 F with URMA's 10 m wind and 1.98 F with HRRR's 10 m wind |
+| W wind | exp(-(U / 30 mph)^3), U = the wind about 450 m above the ground (the HRRR's pressure levels interpolated in height; 925 hPa where the ground is near 300 m) | threshold about 30 mph aloft | 2.37 F without any wind term; 1.71 F with the 925 hPa forecast wind against 1.89 F with URMA's 10 m wind and 1.98 F with HRRR's 10 m wind |
 | cloud | 1 - 0.8 x cloud fraction | linear | 2.35 F without it; linear beats squared and exponential |
 | dryness | min(1, (T - Td) / 12 F); T the forecast temperature, Td the station's dewpoint read in the evening | 12 F | 2.25 F without it (URMA's dewpoint does not help; the station's own does) |
 
@@ -50,3 +50,9 @@ Inputs from the 22Z NBM run (temperature, dewpoint, cloud) and the 22Z HRRR run 
 NBM dewpoint minus the station's: +2.1 F in fall (45 nights), +0.6 F in summer (87 hours, 11 nights). NBM temperature minus URMA: +0.3 F, rmse 2.0 F. NBM cloud minus URMA: +4 points.
 The gap between 1.1 F (analysis inputs) and 2.5-2.6 F (forecast inputs) is the forecast's own error; the 925 hPa wind's advantage in the hourly fit (1.71 against 1.98 F) does not show in the nightly low (2.6 F either way).
 Best simple settings found: anchor the dewpoint to the station's evening reading (or take 3-5 F off the forecast's), falling 0.2-0.3 F/h; chosen on these nights, so slightly optimistic.
+
+## The wind level, by height above the ground (2026-11-19)
+Winds interpolated to a fixed height above the ground (HRRR pressure levels with their geopotential heights, the point's elevation, and the 10 m wind), 533 night hours, leave-one-night-out error with the threshold form refitted each time:
+100 m 1.97 F, 200 m 1.77, 300 m 1.72, **400 m 1.69, 500 m 1.68**, 600 m 1.70, 800 m 1.84, 1000 m 1.79; the nearest pressure level to 400 m 1.70; the fixed 925 hPa level 1.69 (it is about 520 m above the ground at this site).
+Pressure levels alone: 10 m 2.03, 950 hPa 1.74, 925 1.69, 900 1.83, 850 1.87, 800 2.13, 700 2.34. The threshold is the same across the flat range (about 28-29 mph, exponent 3).
+So the wind to use is the wind about 450 m above the ground, which stays defined over high terrain, where 925 hPa is underground (`termux/low.py` and `maps/tonight_live.html` interpolate it; checked at a plains point and at a point near 1,600 m).

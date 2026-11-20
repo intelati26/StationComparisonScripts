@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Tonight: 925 mb wind and the low</title>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Tonight: wind aloft and the low</title>
 <style>
 :root{--bg:#f6f7f9;--card:#fff;--ink:#1d232b;--mute:#5b6572;--line:#d9dee5;--acc:#1f5fbf;--warn:#b4531a}
 @media (prefers-color-scheme:dark){:root{--bg:#14181d;--card:#1c2229;--ink:#e6ebf0;--mute:#9aa6b2;--line:#2c353f;--acc:#6aa2ff;--warn:#ef9a5b}}
@@ -15,7 +15,7 @@ button{cursor:pointer}button.on{border-color:var(--acc);color:var(--acc)}
 .bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}input[type=number]{width:110px}
 #msg{color:var(--warn);font-size:13px;min-height:18px}
 </style></head><body><main>
-<h1>Tonight: 925 mb wind and the low</h1>
+<h1>Tonight: wind aloft and the low</h1>
 <p class="sub">Every picture is loaded live from NCEP MAG or SPC, and the numbers from Open-Meteo, so the page is reusable on any night. No place is stored in the file.</p>
 
 <div class="card">
@@ -43,15 +43,15 @@ button{cursor:pointer}button.on{border-color:var(--acc);color:var(--acc)}
   <div><div class="k">valid</div><div class="v" id="t">-</div></div>
   <div><div class="k">forecast temperature</div><div class="v" id="temp">-</div></div>
   <div><div class="k">cloud</div><div class="v" id="cloud">-</div></div>
-  <div><div class="k">925 mb wind at the site</div><div class="v" id="u925">-</div></div>
+  <div><div class="k">wind about 450 m up, at the site</div><div class="v" id="u925">-</div></div>
   <div><div class="k">equation's drop / predicted</div><div class="v" id="drop">-</div></div>
  </div>
 </div>
 
-<div class="card"><div class="k">925 mb wind at the site by hour (mph). The equation's wind term halves near 25 mph and is nearly gone by 35 mph.</div><svg id="chart" viewBox="0 0 700 150" width="100%"></svg></div>
+<div class="card"><div class="k">Wind about 450 m above the ground at the site, by hour (mph). The equation's wind term halves near 25 mph and is nearly gone by 35 mph.</div><svg id="chart" viewBox="0 0 700 150" width="100%"></svg></div>
 <div class="card" id="summary"><div class="k">Set a place and press go for the low.</div></div>
 
-<p class="sub">The equation: drop = amplitude x night x exp(-(U925/30 mph)^3) x (1 - 0.8 x cloud) x min(1, (T - Td)/12 F), with T, Td, cloud and wind from the HRRR (GFS outside the US) and the dewpoint corrected 1 F (Jun-Aug), 3 F (Sep-Nov) or 2 F. Amplitude 5 F is the typical site of 29 compared; 10 F is a cold-prone hollow. See EQUATION.md.</p>
+<p class="sub">The equation: drop = amplitude x night x exp(-(U/30 mph)^3), U the wind about 450 m above the ground (interpolated between the pressure levels, so it works over high terrain too) x (1 - 0.8 x cloud) x min(1, (T - Td)/12 F), with T, Td, cloud and wind from the HRRR (GFS outside the US) and the dewpoint corrected 1 F (Jun-Aug), 3 F (Sep-Nov) or 2 F. Amplitude 5 F is the typical site of 29 compared; 10 F is a cold-prone hollow. See EQUATION.md.</p>
 </main>
 
 <script>
@@ -87,9 +87,24 @@ const Core = (() => {
   function drop(amp, nightF, u925, cloud, temp, td) {
     return amp * nightF * Math.exp(-Math.pow(u925 / 30, 3)) * (1 - 0.8 * cloud / 100) * Math.min(1, Math.max(0, temp - td) / 12);
   }
+  const LEVELS = [1000, 975, 950, 925, 900, 850, 800, 700], TARGET = 450;   // the wind about 450 m above the ground (300-600 m fit equally well; 925 mb is about that high where the ground is near 300 m)
+  function windAloft(h, i, ground) {              // interpolated in height between the 10 m wind and the pressure levels above the ground (925 mb is underground over high terrain)
+    let pts = [[10, h.wind_speed_10m[i]]];
+    for (const l of LEVELS) {
+      const w = h["wind_speed_" + l + "hPa"][i], z = h["geopotential_height_" + l + "hPa"][i];
+      if (w != null && z != null && z - ground > 30) pts.push([z - ground, w]);
+    }
+    pts = pts.filter(p => p[1] != null).sort((a, b) => a[0] - b[0]);
+    if (pts.length < 2) return null;
+    for (let j = 0; j + 1 < pts.length; j++) {
+      const [a0, w0] = pts[j], [a1, w1] = pts[j + 1];
+      if (a0 <= TARGET && TARGET <= a1) return w0 + (w1 - w0) * (TARGET - a0) / (a1 - a0);
+    }
+    return TARGET > pts[pts.length - 1][0] ? pts[pts.length - 1][1] : pts[0][1];
+  }
   function parse(d) {                             // Open-Meteo answer (timezone=UTC) -> hourly rows and sun times in ms
-    const h = d.hourly;
-    const rows = h.time.map((t, i) => ({ t: Date.parse(t + "Z"), temp: h.temperature_2m[i], td: h.dew_point_2m[i], cloud: h.cloud_cover[i], u: h.wind_speed_925hPa[i] }));
+    const h = d.hourly, ground = d.elevation;
+    const rows = h.time.map((t, i) => ({ t: Date.parse(t + "Z"), temp: h.temperature_2m[i], td: h.dew_point_2m[i], cloud: h.cloud_cover[i], u: windAloft(h, i, ground) }));
     const sun = d.daily.time.map((_, i) => ({ rise: Date.parse(d.daily.sunrise[i] + "Z"), set: Date.parse(d.daily.sunset[i] + "Z") }));
     return { rows, sun };
   }
@@ -175,10 +190,10 @@ if (typeof document !== "undefined") (() => {
     const lat = parseFloat($("lat").value), lon = parseFloat($("lon").value);
     if (isNaN(lat) || isNaN(lon)) { $("msg").textContent = "enter a latitude and longitude"; return; }
     try { localStorage.setItem("tonight.loc", JSON.stringify({ lat, lon, amp: $("amp").value, adj: $("tdadj").value })); } catch (e) {}
-    const q = m => `https://api.open-meteo.com/v1/forecast?latitude=${lat.toFixed(1)}&longitude=${lon.toFixed(1)}&models=${m}&timezone=UTC&forecast_days=3&temperature_unit=fahrenheit&wind_speed_unit=mph&hourly=temperature_2m,dew_point_2m,cloud_cover,wind_speed_925hPa&daily=sunrise,sunset`;
+    const q = m => `https://api.open-meteo.com/v1/forecast?latitude=${lat.toFixed(1)}&longitude=${lon.toFixed(1)}&models=${m}&timezone=UTC&forecast_days=3&temperature_unit=fahrenheit&wind_speed_unit=mph&hourly=temperature_2m,dew_point_2m,cloud_cover,wind_speed_10m,${[1000, 975, 950, 925, 900, 850, 800, 700].map(l => `wind_speed_${l}hPa,geopotential_height_${l}hPa`).join(",")}&daily=sunrise,sunset`;
     let d = null;
     for (const m of ["ncep_hrrr_conus", "gfs_seamless"]) {
-      try { const r = await fetch(q(m)); const j = await r.json(); if (j.hourly && j.hourly.wind_speed_925hPa.some(v => v != null) && j.hourly.temperature_2m.some(v => v != null)) { d = j; break; } } catch (e) {}
+      try { const r = await fetch(q(m)); const j = await r.json(); if (j.hourly && j.elevation != null && j.hourly.wind_speed_925hPa.some(v => v != null) && j.hourly.temperature_2m.some(v => v != null)) { d = j; break; } } catch (e) {}
     }
     if (!d) { $("msg").textContent = "Open-Meteo did not answer"; return; }
     const parsed = Core.parse(d), now = Date.now(), adj = parseFloat($("tdadj").value);
@@ -186,7 +201,7 @@ if (typeof document !== "undefined") (() => {
     chart(parsed.rows);
     if (!night) { $("summary").innerHTML = '<div class="k">no night hours in the forecast yet</div>'; return; }
     const s = Core.summary(night), t = ms => new Date(ms).toLocaleString([], { weekday: "short", hour: "numeric" });
-    $("summary").innerHTML = `<div class="v">forecast low ${Math.round(s.fl.temp)} F at ${t(s.fl.t)} &nbsp; equation ${Math.round(s.pl.pred)} F at ${t(s.pl.t)} &nbsp; mental rule ${Math.round(s.rule)} F</div><div class="k">${s.why}. Night: cloud ${Math.round(s.cloud)}%, 925 mb wind up to ${Math.round(s.umax)} mph, dewpoint ${Math.round(s.tdEve)} F after the correction.</div>`;
+    $("summary").innerHTML = `<div class="v">forecast low ${Math.round(s.fl.temp)} F at ${t(s.fl.t)} &nbsp; equation ${Math.round(s.pl.pred)} F at ${t(s.pl.t)} &nbsp; mental rule ${Math.round(s.rule)} F</div><div class="k">${s.why}. Night: cloud ${Math.round(s.cloud)}%, wind aloft (450 m) up to ${Math.round(s.umax)} mph, dewpoint ${Math.round(s.tdEve)} F after the correction.</div>`;
     show(k);
   }
   times = Core.tonight(Date.now());

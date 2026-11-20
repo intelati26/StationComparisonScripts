@@ -38,7 +38,7 @@ def get(url):
 
 
 def main(d0, d1):
-    site = os.environ.get("WU_SITE", "")                  # a second place: WU_SITE=north reads log/wu_nearby_north.json and writes log/wu_hourly_north.json
+    site = os.environ.get("WU_SITE", "")                  # a second place: WU_SITE=name reads log/wu_nearby_name.json and writes log/wu_hourly_name.json
     nearby = json.loads((HERE / "log" / (f"wu_nearby_{site}.json" if site else "wu_nearby.json")).read_text())["stations"]
     chosen = [r for r in nearby if r[5] >= 0][:10]       # r = [km, id, name, lat, lon, qc]
     f = HERE / "log" / (f"wu_hourly_{site}.json" if site else "wu_hourly.json")

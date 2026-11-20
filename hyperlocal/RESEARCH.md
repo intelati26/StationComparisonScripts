@@ -99,7 +99,7 @@ Scripts: `wind_check.py`, `check_equation.py`, `hrrr_leads.py`. Deficit = URMA 2
 
 ## Second place: the channel-distance finding did not replicate (2026-11-19)
 
-Test: Pittsburg / Frontenac, Kansas (random one-decimal point 37.5, -94.7, about 60 km north of the home place), 8 Weather Underground stations 3-10 km from the centre, station minus URMA at the centre on that
+Test: Pittsburg / Frontenac, Kansas (random one-decimal point 37.5, -94.7), 8 Weather Underground stations 3-10 km from the centre, station minus URMA at the centre on that
 place's clear, calm nights (22 nights, URMA cloud < 20% and the stations' mean wind < 1 mph), indices from 3DEP 8 m terrain (`terrain_local.py`, `site_analysis.py`). The two indices fixed beforehand were distance to channel and relative position within 500 m.
 
 | index (correlation with how warm the site runs vs URMA) | Home, 6 sites | Pittsburg, 8 sites | pooled, 14 (each place re-centred) |
@@ -153,3 +153,35 @@ Slope per standard deviation (F) of how warm a site runs against URMA, by place,
 **No single terrain index beats "no model" across places** (best 2.38 F against 2.42 F; most worse); the signs change from place to place. The home-place hints (channel distance, TPI) were
 small-sample findings. Stations in one place differ by 6-10 F on clear, calm nights and the terrain indices here do not explain it; sensor siting and shielding, canopy and buildings are
 untested candidates. Elevation matters at the high-relief place (Ozark) as the drainage picture says.
+
+## The whole suite over 36 stations in five places (2026-11-20; `all_stations.py`)
+Analysis inputs (URMA temperature and cloud at the place's centre, the HRRR's wind about 450 m above its ground, each station's own hourly dewpoint), 1,640 station-nights, scored on each station's nightly low.
+Mean over stations of each station's mean absolute error (F) and how many stations improved on the forecast low alone:
+
+| prediction | MAE | stations improved | bias |
+|---|---|---|---|
+| the forecast (URMA) low alone | 2.36 | - | +1.38 |
+| equation, typical amplitude 5 F | 1.80 | 28 of 36 | +0.36 |
+| equation, amplitude 10 F | 1.60 | 22 of 36 | -0.78 |
+| equation, the station's own amplitude | 1.34 | 30 of 36 | +0.11 |
+| equation, amplitude predicted from terrain | 1.73 | 28 of 36 | +0.25 |
+| equation, own amplitude and offset | 1.13 | 32 of 36 | +0.15 |
+
+By place (forecast | typical 5 | own): home 2.99 | 2.29 | 1.96; Pittsburg 1.50 | 1.33 | 0.99; Ozark 2.26 | 1.63 | 1.35; Adrian 1.36 | 1.05 | 1.07; Blue Ridge valley 3.79 | 2.76 | 1.43.
+Appalachian place (7 stations, 650-1,101 m): the amplitude falls with station elevation, 12.9, 12.0, 10.6, 9.8, 4.4, -1.0, -2.0 F from the lowest to the highest (correlation -0.98 with elevation, about -3.8 F per 100 m, crossing zero near 1,015 m): valley floors pool, the higher stations sit in the warmer air above
+(a thermal belt) and the equation does not apply to them. In the lowlands, with 30-180 ft of relief, the same elevation signal was weak or absent. Wind height tested there (7 stations): all variants within 0.06 F (local 700 m 1.77, 850 hPa 1.78, 450 m 1.78, 925 hPa 1.82, 10 m 1.83).
+
+## Predicting a site's amplitude without its data (2026-11-20; `svf.py`, `all_stations.py`)
+36 stations in five places, amplitude b = the station's own fit of (model - station) against the weather factor. Correlation within each place (re-centred) and pooled over the places:
+
+| predictor | what it showed |
+|---|---|
+| height above the valley floor (Blue Ridge valley, 7 stations, 450 m of relief) | -0.98, about -3.8 F per 100 m; the highest stations show no pooling at all. One valley only |
+| the same in the lowlands (30-180 ft of relief) | weak or absent |
+| position within 500 m, TPI within 1 km | pooled about -0.55 (same sign in all four lowland places); predicting a held-out place helps at 14-15 of 29 sites, 90% range touching zero |
+| area draining to the site, distance to a channel (terrain or mapped) | mixed signs between places; not replicated |
+| sky view from the terrain (16 directions, 300 m to 2 km) | -0.48 to +0.58 by place, pooled -0.2: no consistent effect (the spread of sky view among the stations of a lowland place is only 0.03-0.04) |
+| obstruction height (30 m surface model minus the 8 m terrain, within 100-500 m) | pooled +0.05 to +0.19, signs mixed: no relation at this resolution |
+
+Not tested: trees and buildings from lidar points, land cover and impervious area, soil moisture and nearby water, the shielding and height of the sensor, the fetch in each direction (treeline), a valley topographic amplification factor.
+So: no dependable physical predictor of a site's amplitude from terrain alone apart from the large-relief rule; the typical 5 F or two weeks of the station's own data (`amp.py`) are the practical choices.

@@ -566,6 +566,57 @@ def cmd_gribfill(cfg, until):
     print("done")
 
 
+def hrrr_levels(lat, lon, d0, d1, step_days=6, tries=4, extra=()):
+    """HRRR pressure-level winds with their geopotential heights, the 10 m wind and the grid's elevation, hourly, from Open-Meteo's stitched history (analysis-like). Fetched in short date chunks: a long range of
+    many variables times out on the server. One decimal of the coordinates is sent. -> (elevation_m, {hour(UTC): {"w10": mph, "w<level>": mph, "z<level>": m}})"""
+    import time
+    levels = (1000, 975, 950, 925, 900, 850, 800, 700)
+    out, ground = {}, None
+    day = datetime.fromisoformat(d0)
+    end = datetime.fromisoformat(d1)
+    while day <= end:
+        stop = min(day + timedelta(days=step_days - 1), end)
+        q = {"latitude": round(lat, 1), "longitude": round(lon, 1), "models": "ncep_hrrr_conus", "timezone": "UTC", "wind_speed_unit": "mph", "temperature_unit": "fahrenheit",
+             "start_date": day.strftime("%Y-%m-%d"), "end_date": stop.strftime("%Y-%m-%d"),
+             "hourly": "wind_speed_10m," + ",".join(f"wind_speed_{l}hPa,geopotential_height_{l}hPa" for l in levels) + "".join("," + e for e in extra)}
+        for attempt in range(tries):
+            try:
+                d = json.loads(urllib.request.urlopen("https://historical-forecast-api.open-meteo.com/v1/forecast?" + urllib.parse.urlencode(q), timeout=90).read())
+                break
+            except Exception:
+                d = None
+                time.sleep(3 * (attempt + 1))
+        if d is None or "hourly" not in d:
+            sys.exit(f"Open-Meteo did not answer for {day:%Y-%m-%d}")
+        ground = d.get("elevation", ground)
+        h = d["hourly"]
+        for i, t in enumerate(h["time"]):
+            row = {"w10": h["wind_speed_10m"][i]}
+            for l in levels:
+                row[f"w{l}"] = h[f"wind_speed_{l}hPa"][i]; row[f"z{l}"] = h[f"geopotential_height_{l}hPa"][i]
+            for e in extra:
+                row[e] = h[e][i]
+            out[datetime.fromisoformat(t).replace(tzinfo=timezone.utc)] = row
+        day = stop + timedelta(days=1)
+    return ground, out
+
+
+def wind_agl(row, ground, target):
+    """Wind at `target` metres above `ground` (m, sea level), interpolated in height between the 10 m wind and the levels above that ground; None if there are fewer than two points."""
+    pts = [(10.0, row["w10"])] if row.get("w10") is not None else []
+    for l in (1000, 975, 950, 925, 900, 850, 800, 700):
+        w, z = row.get(f"w{l}"), row.get(f"z{l}")
+        if w is not None and z is not None and z - ground > 30:
+            pts.append((z - ground, w))
+    pts.sort()
+    if len(pts) < 2:
+        return None
+    for (a0, w0), (a1, w1) in zip(pts, pts[1:]):
+        if a0 <= target <= a1:
+            return w0 + (w1 - w0) * (target - a0) / (a1 - a0)
+    return pts[-1][1] if target > pts[-1][0] else pts[0][1]
+
+
 def cmd_fit(cfg, days=0):
     """Fit max_deficit_f, cloud_weight and wind_scale_mph: deficit = URMA (the grid's air) minus the station, on night hours
     (2 h past sunset to sunrise). Hours come from the archive and, with `fit N`, from the last N days downloaded (Ambient history
