@@ -920,6 +920,15 @@ def main():
             fc_sd.index = pd.to_datetime(fc_sd.index, utc=True)
             pivoted_sd = pivoted_sd.drop(columns=["coldpool_fc"])
 
+    # Hindsight backfill (model "coldpool_bf": the same equation on Open-Meteo's stitched HRRR hours, for a first multi-day plot): its own dotted line.
+    bf_series = None
+    if "coldpool_bf" in pivoted_models.columns:
+        bf_series = pivoted_models["coldpool_bf"].dropna()
+        bf_series.index = pd.to_datetime(bf_series.index, utc=True)
+        pivoted_models = pivoted_models.drop(columns=["coldpool_bf"])
+        if "coldpool_bf" in pivoted_sd.columns:
+            pivoted_sd = pivoted_sd.drop(columns=["coldpool_bf"])
+
     # --- UNIFY MODEL CASCADE ---
     unified_model, unified_sd = unify_model_cascade(pivoted_models, pivoted_sd)
     unified_precip = _unify_pivoted_column(pivoted_precip)
@@ -1210,6 +1219,12 @@ def main():
             ax1.annotate(f"{fc.min():.0f} F", (low_t, fc.min()), textcoords="offset points", xytext=(8, -14),
                          color="darkgoldenrod", fontsize=9, fontweight="bold")
 
+    if bf_series is not None:
+        bf = bf_series[(bf_series.index >= cutoff) & (bf_series.index <= plot_end)].resample("1h").mean()
+        if bf.notna().any():                          # dotted: a hindsight reconstruction, not a forecast as issued
+            ax1.plot(bf.index, bf.values, linestyle=":", linewidth=1.7, marker="o", markersize=2.5, color="seagreen", alpha=0.85,
+                     label="adjusted, backfilled from HRRR hours (hindsight)")
+
     # --- HOURLY RAINFALL (twin y-axis): station(s) vs model ---
     # Separate y-axis since rain (inches) and temperature (F) are
     # different units/scales entirely -- twinx() shares the same x-axis
@@ -1464,20 +1479,23 @@ def main():
                     print(f"  Cold-pool adjusted: mean error {cp_err.mean():+.2f} F, mean abs {cp_err.abs().mean():.2f} F over {cp_err.notna().sum()} night hours "
                           f"(URMA alone on the same hours: {(model_df['model_val'].reindex(cp.index) - st_at).dropna().reindex(cp_err.dropna().index).mean():+.2f} F)")
 
-            if fc_series is not None:                     # the forecast as it was issued, against what the station then did (past hours only)
-                fc_b = fc_series[(fc_series.index >= cutoff) & (fc_series.index <= now_utc)].resample("1h").mean()
+            for fc_ser, fc_ls, fc_label, fc_tag in ((fc_series, "--", "Bias of the adjusted forecast (as issued)", "as issued"),
+                                                    (bf_series, ":", "Bias of the backfilled adjusted forecast (hindsight)", "backfill")):
+                if fc_ser is None:
+                    continue
+                fc_b = fc_ser[(fc_ser.index >= cutoff) & (fc_ser.index <= now_utc)].resample("1h").mean()
                 st_f = combined_df["station_interpolated"].reindex(fc_b.index)
                 fc_err = (fc_b - st_f).dropna()
                 if not fc_err.empty:
-                    ax2.plot(fc_err.reindex(fc_b.index).index, fc_err.reindex(fc_b.index).values, linestyle="--", linewidth=1.6, marker="o", markersize=3,
-                             color="seagreen", zorder=4, label="Bias of the adjusted forecast (as issued)")
-                    print(f"  Adjusted forecast as issued: mean error {fc_err.mean():+.2f} F, mean abs {fc_err.abs().mean():.2f} F over {len(fc_err)} hours")
+                    ax2.plot(fc_err.reindex(fc_b.index).index, fc_err.reindex(fc_b.index).values, linestyle=fc_ls, linewidth=1.6, marker="o", markersize=3,
+                             color="seagreen", zorder=4, label=fc_label)
+                    print(f"  Adjusted forecast ({fc_tag}): mean error {fc_err.mean():+.2f} F, mean abs {fc_err.abs().mean():.2f} F over {len(fc_err)} hours")
                     nights = (fc_err.index.tz_convert(tz) - pd.Timedelta(hours=12)).date            # an evening and the morning after count as one night
                     for night in sorted(set(nights)):
-                        idx = fc_err.index[nights == night]
-                        if len(idx) >= 6:
-                            pred, act = fc_b.reindex(idx).min(), st_f.reindex(idx).min()
-                            print(f"    night of {night}: predicted low {pred:5.1f} F, station low {act:5.1f} F  ({pred - act:+.1f} F)  [{len(idx)} hours]")
+                        idx_n = fc_err.index[nights == night]
+                        if len(idx_n) >= 6:
+                            pred, act = fc_b.reindex(idx_n).min(), st_f.reindex(idx_n).min()
+                            print(f"    night of {night}: predicted low {pred:5.1f} F, station low {act:5.1f} F  ({pred - act:+.1f} F)  [{len(idx_n)} hours, {fc_tag}]")
 
             ax2.axhline(0, color="black", linestyle="-", linewidth=0.8, alpha=0.7, zorder=1)
 
