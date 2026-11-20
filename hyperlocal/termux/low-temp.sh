@@ -1,25 +1,18 @@
 #!/data/data/com.termux/files/usr/bin/bash
 # Termux:Widget shortcut (copy to ~/.shortcuts/): tap it, get tonight's low and the hour-by-hour adjusted temperatures as a notification.
-# Needs: pkg install python termux-api.  Optional: pkg install matplotlib, and low_plot.py beside low.py in ~, to attach a picture of the forecast, the adjustment and the +- band.
-# One Open-Meteo request serves both: low.py saves its result, low_plot.py draws from that file.
-json=~/.low_last.json
-out=$(python ~/low.py --notify --json-file "$json" "$@" 2>&1)
+# Needs: pkg install python termux-api.  Optional: pkg install matplotlib, to attach a picture (tapping it opens it full size).
+#
+# ONE place for everything: low.py, low_plot.py and the .env live in DIR, and so do the picture and the last result. Set it here once (or export LOW_DIR).
+# Use a folder in shared storage (run termux-setup-storage once) so you can edit .env from the phone's file manager and a viewer app can open the picture.
+DIR="${LOW_DIR:-$HOME/storage/dcim/weather}"
+[ -f "$DIR/low.py" ] || { [ -f "$HOME/low.py" ] && DIR="$HOME"; }       # older installs kept the files in ~
+
+json="$DIR/.low_last.json"
+out=$(python "$DIR/low.py" --notify --json-file "$json" "$@" 2>&1)
 echo "$out"
-img=""
-if [ -s "$json" ] && [ -f ~/low_plot.py ] && python -c "import matplotlib" 2>/dev/null; then
-  img=$(python ~/low_plot.py --from "$json" 2>/dev/null | tail -1)
-fi
 act=()
-if [ -n "$img" ]; then
-  # the viewer app cannot read Termux's private folder ("does not have permission to open"): open a copy in shared storage, in the weather folder with the .env if there is one (run termux-setup-storage once to create ~/storage)
-  show="$img"
-  dest=~/storage/dcim/weather
-  [ -d "$dest" ] || dest=~/storage/shared/Pictures
-  if [ -d ~/storage/shared ]; then
-    mkdir -p "$dest" && cp "$img" "$dest/low.png" && show="$dest/low.png"
-  else
-    echo "run termux-setup-storage once (and allow it) so tapping the notification can open the picture"
-  fi
-  act=(--image-path "$img" --action "termux-open '$show'" --button1 "Picture" --button1-action "termux-open '$show'")
+if [ -s "$json" ] && [ -f "$DIR/low_plot.py" ] && python -c "import matplotlib" 2>/dev/null; then
+  img=$(python "$DIR/low_plot.py" "$DIR/low.png" --from "$json" 2>/dev/null | tail -1)
+  [ -n "$img" ] && act=(--image-path "$img" --action "termux-open '$img'" --button1 "Picture" --button1-action "termux-open '$img'")
 fi
 termux-notification --id tonight --title "Tonight: $(echo "$out" | head -1)" --content "$(echo "$out" | tail -n +2)" "${act[@]}" 2>/dev/null
