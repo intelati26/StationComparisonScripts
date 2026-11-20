@@ -1284,7 +1284,7 @@ def main():
     ax1.patch.set_visible(False)  # ax1's background would otherwise hide ax1_rain's bars
     h1, l1 = ax1.get_legend_handles_labels()
     h2, l2 = ax1_rain.get_legend_handles_labels()
-    ax1.legend(
+    ax1_legend = ax1.legend(
         h1 + h2, l1 + l2,
         loc="upper center", bbox_to_anchor=(0.5, -0.08),
         ncol=3, frameon=True, facecolor="white", framealpha=0.9, fontsize=8.5,
@@ -1686,22 +1686,45 @@ def main():
     fig_h_base = 13.5
     extra_h_ax1 = ax1_header_rows * ROW_HEIGHT_INCHES
     extra_h_ax2 = ax2_header_rows * ROW_HEIGHT_INCHES
-    new_fig_h = fig_h_base + extra_h_ax1 + extra_h_ax2
-    fig.set_size_inches(fig_w, new_fig_h)
 
-    # Reserve room for the header rows as fractions of the CORRECTED
-    # total figure height: ax1's rows eat into the figure's top margin
-    # (nothing above ax1 except the figure edge), ax2's rows eat into the
-    # hspace gap between the two panels (ax1's legend already lives below
-    # ax1, so ax2's header rows share that same gap). hspace is a
-    # fraction of the AVERAGE axes height (matplotlib's own definition),
-    # not of the figure directly, so it's derived from the actual
-    # height_ratios split rather than a guessed multiplier.
-    top_margin = 1.0 - (extra_h_ax1 + 0.35 + 0.12) / new_fig_h
-    avg_axes_height_frac = top_margin * (3.5 / 5.3 + 1.8 / 5.3) / 2
-    hspace = 0.35 + ((extra_h_ax2 + 0.15) / new_fig_h) / max(avg_axes_height_frac, 0.01)
-    fig.subplots_adjust(bottom=extra_bottom * fig_h_base / new_fig_h,
-                        top=top_margin, hspace=hspace)
+    # ax1's legend lives in the gap between the two panels and grows with its number of entries (more stations, the cold-pool
+    # lines...). Its height is measured (inches do not depend on the figure height) so the gap can be sized to hold it,
+    # instead of the legend running into ax2's header rows and the bias title.
+    try:
+        from matplotlib.backends.backend_agg import RendererAgg
+        _r = RendererAgg(int(fig_w * fig.dpi), int(fig_h_base * fig.dpi), fig.dpi)
+        ax1_legend_h_in = ax1_legend.get_window_extent(_r).height / fig.dpi
+    except Exception:
+        ax1_legend_h_in = 0.0
+    LEGEND_PAD_INCHES = 0.2
+
+    for _pass in range(4):
+        new_fig_h = fig_h_base + extra_h_ax1 + extra_h_ax2
+        fig.set_size_inches(fig_w, new_fig_h)
+
+        # Reserve room for the header rows as fractions of the CORRECTED
+        # total figure height: ax1's rows eat into the figure's top margin
+        # (nothing above ax1 except the figure edge), ax2's rows eat into the
+        # hspace gap between the two panels (ax1's legend already lives below
+        # ax1, so ax2's header rows share that same gap). hspace is a
+        # fraction of the AVERAGE axes height (matplotlib's own definition),
+        # not of the figure directly, so it's derived from the actual
+        # height_ratios split rather than a guessed multiplier.
+        top_margin = 1.0 - (extra_h_ax1 + 0.35 + 0.12) / new_fig_h
+        avg_axes_height_frac = top_margin * (3.5 / 5.3 + 1.8 / 5.3) / 2
+        hspace = 0.35 + ((extra_h_ax2 + 0.15) / new_fig_h) / max(avg_axes_height_frac, 0.01)
+        fig.subplots_adjust(bottom=extra_bottom * fig_h_base / new_fig_h,
+                            top=top_margin, hspace=hspace)
+        if ax1_legend_h_in <= 0:
+            break
+        # Where does the legend's bottom edge land, against the top of ax2's header rows?
+        p1, p2 = ax1.get_position(), ax2.get_position()
+        legend_bottom = p1.y0 - 0.08 * p1.height - ax1_legend_h_in / new_fig_h
+        ax2_top_with_header = p2.y1 + (ax2_header_rows * ROW_HEIGHT_INCHES) / new_fig_h
+        deficit_in = (ax2_top_with_header + LEGEND_PAD_INCHES / new_fig_h - legend_bottom) * new_fig_h
+        if deficit_in <= 0.02:
+            break
+        extra_h_ax2 += deficit_in
 
     # Draw the header rows now that layout is finalized, using each
     # axes' REAL position (read back via get_position(), not a
