@@ -31,12 +31,14 @@ p.add_argument("lat", nargs="?", type=float)
 p.add_argument("lon", nargs="?", type=float)
 p.add_argument("--amp", type=float, default=float(os.environ.get("HYPERLOCAL_AMP") or 5.0), help="site amplitude in F: 5 typical, 10 for a cold-prone hollow (default: HYPERLOCAL_AMP from .env, else 5)")
 p.add_argument("--td-adjust", type=float, default=float(os.environ["HYPERLOCAL_TD_ADJUST"]) if os.environ.get("HYPERLOCAL_TD_ADJUST") else None, help="F taken off the forecast dewpoint (default: 1 in Jun-Aug, 3 in Sep-Nov, 2 otherwise)")
-p.add_argument("--bias", type=float, default=float(os.environ.get("HYPERLOCAL_BIAS") or -1.0), help="F added to the predicted low (default -1.0: on 287 nights of real forecasts the equation's low ran 1.0 F warm; HYPERLOCAL_BIAS in .env)")
+p.add_argument("--bias", type=float, default=float(os.environ.get("HYPERLOCAL_BIAS") or 0.0), help="F added to the predicted low (default 0: the bias depends on the forecast it is fed: the equation's low ran 1.0 F warm on the NBM bulletin and 1.9 F cold on Open-Meteo's HRRR history; --log keeps each night's prediction so it can be scored; HYPERLOCAL_BIAS in .env)")
 p.add_argument("--sd", type=float, default=float(os.environ.get("HYPERLOCAL_SD") or 2.8), help="the standard deviation of the predicted low in F, shown as +- (default 2.8, measured on those nights; 0 hides it; HYPERLOCAL_SD in .env)")
 p.add_argument("--decimals", type=int, default=1, help="decimals of the coordinates sent (1 is about 10 km)")
 p.add_argument("--table", action="store_true", help="print every night hour")
 p.add_argument("--nws", action="store_true", help="take the temperature, dewpoint and cloud from the NWS hourly forecast (US only) instead of the HRRR; the wind aloft is still the HRRR's")
 p.add_argument("--hourly", action="store_true", help="a table of the night hours: local time, UTC hour, the forecast, the adjustment and the final temperature")
+p.add_argument("--log", nargs="?", const="", default=None, metavar="FILE", help="append this run (the night's hours, the low, the options) as one JSON line to FILE (default: HYPERLOCAL_LOG from .env, else ~/.low_log.jsonl) so the predictions can be scored against the station: score_low_log.py")
+p.add_argument("--json", action="store_true", help="print the night as JSON (the hours, the low with the bias and the SD) for a plot: plot_low.py; no coordinates in it")
 p.add_argument("--notify", action="store_true", help="for a notification: a title line, then the hourly adjustments")
 a = p.parse_args()
 SAVE = os.path.expanduser("~/.lowtemp")
@@ -204,7 +206,17 @@ def table_text(sep="|", pad=False):
 
 LOW = pl[6] + a.bias                                  # the bias-corrected low; the hourly table below stays as the equation gives it
 SD = f" +-{a.sd:g}" if a.sd else ""
-if a.notify:
+zt = lambda t: (t - OFFSET).strftime("%Y-%m-%dT%H:%M:%SZ")
+PAYLOAD = {"low": round(LOW, 1), "equation_low": round(pl[6], 1), "low_utc": zt(pl[0]), "forecast_low": round(fl[1], 1), "rule": round(rule, 1), "bias": a.bias, "sd": a.sd, "amp": a.amp, "source": LABEL, "td_adjust": adj,
+           "utc_offset_seconds": d.get("utc_offset_seconds") or 0, "cloud_mean": round(cloud), "wind_aloft_max": round(umax),
+           "hours": [{"utc": zt(t), "forecast": round(temp, 1), "dewpoint": round(td, 1), "cloud": cl, "wind_aloft": round(u, 1), "drop": round(dr, 2), "final": round(pr, 1)} for t, temp, td, cl, u, dr, pr in rows]}
+if a.log is not None:
+    path = os.path.expanduser(a.log or os.environ.get("HYPERLOCAL_LOG") or "~/.low_log.jsonl")
+    with open(path, "a") as lf:
+        lf.write(json.dumps({"run_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), **PAYLOAD}) + "\n")
+if a.json:
+    print(json.dumps(PAYLOAD))
+elif a.notify:
     print(f"low {LOW:.0f}F{SD} at {hour_label(pl[0])} (forecast {fl[1]:.0f}F, rule {rule:.0f}F)")
     print(table_text())
     print(f"cloud {cloud:.0f}%, wind aloft up to {umax:.0f} mph")
