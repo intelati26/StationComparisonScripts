@@ -216,6 +216,21 @@ MODEL_TIER = {
     "hrrr_f04": -4,
     "hrrr_f05": -5,
 }
+# Generate the rest so ANY --hrrr-max-lead ranks correctly. Previously
+# hrrr_f06 was missing here and MODEL_TIER.get(..., -1) scored it as -1,
+# i.e. BETTER than f02-f05, so an older-run f06 could "upgrade" a row that
+# came from a newer run. Lower lead == newer run == higher tier.
+for _n in range(0, 19):
+    MODEL_TIER.setdefault(f"hrrr_f{_n:02d}", -_n)
+for _n in range(0, 10):
+    MODEL_TIER.setdefault(f"rrfs_f{_n:02d}", 5 - _n)
+del _n
+
+# Indices into the (temp_f, temp_sd, cloud_cover, wind_speed, precip) tuple
+# that a forecast-lineage (HRRR/RRFS) extraction must carry to count as
+# COMPLETE. precip is excluded on purpose: HRRR f00 has no accumulated
+# precip, so None there is normal. Edit this tuple to tighten/loosen.
+REQUIRED_MODEL_FIELDS = (0, 2, 3)   # temp_f, cloud_cover, wind_speed
 
 # Safety valve: max pages to prevent infinite loops
 AMBIENT_MAX_PAGES = 10000
@@ -278,6 +293,23 @@ CREATE TABLE IF NOT EXISTS model_analysis (
     wind_speed REAL,
     precip REAL,
     PRIMARY KEY (model, valid_time, latitude, longitude)
+);
+
+-- Empirical clear-sky correction, per station, binned by solar elevation
+-- angle. Built by calibrate_clearsky.py from each station's own solar_
+-- radiation history (high-percentile clearness index per elevation bin),
+-- used to correct the generic Haurwitz clear-sky formula for a specific
+-- sensor's siting/cosine-response and the site's typical local turbidity.
+-- Empty/absent for a station until calibrate_clearsky.py has been run.
+CREATE TABLE IF NOT EXISTS clearsky_calibration (
+    station TEXT NOT NULL,
+    elevation_bin_low REAL NOT NULL,
+    elevation_bin_high REAL NOT NULL,
+    correction_factor REAL NOT NULL,
+    n_samples INTEGER NOT NULL,
+    percentile REAL NOT NULL,
+    computed_at TEXT NOT NULL,
+    PRIMARY KEY (station, elevation_bin_low)
 );
 """
 
@@ -637,19 +669,34 @@ def extract_grib_fields(H, lat, lon, model_name, target_str, fxx=0):
             print(f"    xarray error for '{query}': {e}")
             continue
 
+    # cfgrib may hand back a LIST of Datasets ("multiple hypercubes"). The
+    # variable we want is not necessarily in the first one, so search all of
+    # them and match against every name cfgrib is known to use.
+    def _pick_var(ds, keys, label):
+        dsl = ds if isinstance(ds, list) else [ds]
+        seen = []
+        for d in dsl:
+            if d is None:
+                continue
+            for k in keys:
+                if k in d.data_vars:
+                    return d, k
+            seen.extend(list(d.data_vars))
+        if seen:
+            print(f"    {label}: none of {list(keys)} in returned "
+                  f"variables {sorted(set(seen))}")
+        return None, None
+
     # 2. Total Cloud Cover
     for query in ["TCDC:entire atmosphere", "tcdc", "TCDC"]:
         try:
             ds = _xarray_with_fallback(H, query)
-            if isinstance(ds, list):
-                ds = ds[0]
+            ds, key = _pick_var(ds, ["tcc", "tcdc", "TCDC", "cc"],
+                                f"cloud '{query}'")
             if ds is not None:
                 picked = ds.herbie.pick_points(points, method="nearest")
-                key = next((k for k in ["tcdc", "TCDC", "cc"]
-                            if k in picked), None)
-                if key:
-                    cloud_cover = float(picked[key].values.flatten()[0])
-                    break
+                cloud_cover = float(picked[key].values.flatten()[0])
+                break
         except Exception:
             continue
 
@@ -660,22 +707,17 @@ def extract_grib_fields(H, lat, lon, model_name, target_str, fxx=0):
         try:
             ds_u = _xarray_with_fallback(H, u_query)
             ds_v = _xarray_with_fallback(H, v_query)
-            if isinstance(ds_u, list):
-                ds_u = ds_u[0]
-            if isinstance(ds_v, list):
-                ds_v = ds_v[0]
+            ds_u, uk = _pick_var(ds_u, ["u10", "UGRD", "u"],
+                                 f"wind u '{u_query}'")
+            ds_v, vk = _pick_var(ds_v, ["v10", "VGRD", "v"],
+                                 f"wind v '{v_query}'")
             if ds_u is not None and ds_v is not None:
                 p_u = ds_u.herbie.pick_points(points, method="nearest")
                 p_v = ds_v.herbie.pick_points(points, method="nearest")
-                uk = next((k for k in ["u10", "UGRD", "u"]
-                           if k in p_u), None)
-                vk = next((k for k in ["v10", "VGRD", "v"]
-                           if k in p_v), None)
-                if uk and vk:
-                    u_val = float(p_u[uk].values.flatten()[0])
-                    v_val = float(p_v[vk].values.flatten()[0])
-                    wind_speed = np.sqrt(u_val ** 2 + v_val ** 2) * 2.23694
-                    break
+                u_val = float(p_u[uk].values.flatten()[0])
+                v_val = float(p_v[vk].values.flatten()[0])
+                wind_speed = np.sqrt(u_val ** 2 + v_val ** 2) * 2.23694
+                break
         except Exception:
             continue
 
@@ -683,16 +725,13 @@ def extract_grib_fields(H, lat, lon, model_name, target_str, fxx=0):
     for query in ["APCP:surface", "tp", "APCP"]:
         try:
             ds = _xarray_with_fallback(H, query)
-            if isinstance(ds, list):
-                ds = ds[0]
+            ds, pk = _pick_var(ds, ["tp", "APCP", "p"],
+                               f"precip '{query}'")
             if ds is not None:
                 picked = ds.herbie.pick_points(points, method="nearest")
-                pk = next((k for k in ["tp", "APCP", "p"]
-                           if k in picked), None)
-                if pk:
-                    p_kg = float(picked[pk].values.flatten()[0])
-                    precip = p_kg / 25.4
-                    break
+                p_kg = float(picked[pk].values.flatten()[0])
+                precip = p_kg / 25.4
+                break
         except Exception:
             continue
 
@@ -706,8 +745,27 @@ def extract_grib_fields(H, lat, lon, model_name, target_str, fxx=0):
 ALL_TIERS = {"urma", "rtma", "rrfs", "hrrr"}
 
 
+def find_latest_hrrr_run(now=None, max_back=4):
+    """Most recent HRRR cycle whose f00 file actually exists (probed, not
+    guessed from a latency constant). Returns a tz-aware datetime at the top
+    of the hour, or None if nothing is found (e.g. offline) -- callers then
+    fall back to the old time-based gate."""
+    now = now or datetime.now(timezone.utc)
+    cycle = now.replace(minute=0, second=0, microsecond=0)
+    for _ in range(max_back + 1):
+        try:
+            H = make_herbie(cycle.strftime("%Y-%m-%d %H:%M"), "hrrr", fxx=0)
+            if H.grib is not None:
+                return cycle
+        except Exception:
+            pass
+        cycle -= timedelta(hours=1)
+    return None
+
+
 def resolve_model_cascade(target_time, enable_rrfs=False, tiers=None,
-                          hrrr_max_lead=HRRR_MAX_LEAD):
+                          hrrr_max_lead=HRRR_MAX_LEAD,
+                          latest_hrrr_run=None):
     """
     Build the ordered (model_key, fxx) cascade to try for target_time,
     best quality first.
@@ -725,6 +783,15 @@ def resolve_model_cascade(target_time, enable_rrfs=False, tiers=None,
     age_s = (datetime.now(timezone.utc) - target_time).total_seconds()
     cascade = []
     is_future = age_s < 0
+
+    def _hrrr_cycle_ok(cycle_time):
+        # With an anchor run: any cycle at or before the most recent
+        # AVAILABLE run is usable, later ones are not. Without one: the old
+        # latency-constant gate.
+        if latest_hrrr_run is not None:
+            return cycle_time <= latest_hrrr_run
+        return ((datetime.now(timezone.utc) - cycle_time).total_seconds()
+                >= HRRR_F00_LATENCY_S)
 
     if not is_future:
         if "urma" in tiers and age_s >= URMA_LATENCY_S:
@@ -748,15 +815,13 @@ def resolve_model_cascade(target_time, enable_rrfs=False, tiers=None,
                 if cycle_age >= HRRR_F00_LATENCY_S:
                     cascade.append((f"rrfs_f{lead:02d}", lead))
 
-        if "hrrr" in tiers and age_s >= HRRR_F00_LATENCY_S:
+        if "hrrr" in tiers and _hrrr_cycle_ok(target_time):
             cascade.append(("hrrr_f00", 0))
 
     if "hrrr" in tiers:
         for lead in range(1, hrrr_max_lead + 1):
             cycle_time = target_time - timedelta(hours=lead)
-            cycle_age = (datetime.now(timezone.utc)
-                         - cycle_time).total_seconds()
-            if cycle_age >= HRRR_F00_LATENCY_S:
+            if _hrrr_cycle_ok(cycle_time):
                 cascade.append((f"hrrr_f{lead:02d}", lead))
 
     return cascade
@@ -793,16 +858,6 @@ def _cleanup_grib_cache(H):
 
 
 def try_model_extraction(target_time, model_key, fxx, lat, lon):
-    # inside the tier: the web API first (api_download.py), the GRIB download when it has nothing for this hour
-    try:
-        from api_download import extract as _api_extract
-        api_result = _api_extract(model_key, target_time, lat, lon)
-    except Exception as e:
-        print(f"    {model_key}: API download failed ({e}); using GRIB")
-        api_result = None
-    if api_result is not None and api_result[0] is not None:
-        return api_result
-
     if (model_key.startswith("hrrr_f") or model_key.startswith("rrfs_f")) \
             and fxx > 0:
         cycle_time = target_time - timedelta(hours=fxx)
@@ -2151,6 +2206,87 @@ def _prefetch_cascades_parallel(target_times, enable_rrfs, tiers,
     return cache
 
 
+def _is_complete_result(model_key, result):
+    """Analysis tiers (urma/rtma) keep the original rule: temp_f present.
+    HRRR/RRFS results must also carry every REQUIRED_MODEL_FIELDS value."""
+    if result[0] is None:
+        return False
+    if model_key.startswith(("hrrr", "rrfs")):
+        return all(result[i] is not None for i in REQUIRED_MODEL_FIELDS)
+    return True
+
+
+def _run_label(target_time, model_key, fxx):
+    """'13z F01' style label: the model RUN hour and lead used for target_time."""
+    if model_key.startswith(("hrrr_f", "rrfs_f")) and fxx > 0:
+        run = target_time - timedelta(hours=fxx)
+    else:
+        run = target_time
+    return f"{run.strftime('%d %Hz')} F{fxx:02d}"
+
+
+def walk_cascade_newest_first(target_time, cascade, lat, lon,
+                              accept_partial=True):
+    """Walk `cascade` in order and return
+    (chosen_model, result, models_tried, last_exception).
+
+    The cascade is already ordered best-first, which for HRRR means lowest
+    lead first = MOST RECENT run first (f00 of the run at the valid hour,
+    then f01 of the run 1h earlier, ...). A run is passed over only when it
+    is MISSING (no file / extraction error / no temp) or INCOMPLETE
+    (temp present but a REQUIRED_MODEL_FIELDS value is None). Every run
+    that is passed over is logged with its reason.
+
+    If nothing complete turns up, the newest incomplete result is used when
+    accept_partial=True (fresh fetches) so the hour isn't left empty; the
+    upgrade path passes accept_partial=False so a partial row never
+    replaces an existing one.
+    """
+    models_tried = []
+    skipped = []          # [(label, reason)] for the summary line
+    last_exception = None
+    partial = None
+
+    def _finish(model_key, result, fxx_label):
+        if skipped:
+            why = "; ".join(f"{lb}: {rs}" for lb, rs in skipped)
+            print(f"    valid {target_time.strftime('%d %H:%M')}Z <- "
+                  f"{model_key} ({fxx_label}) after skipping [{why}]")
+        return model_key, result, models_tried, last_exception
+
+    for model_key, fxx in cascade:
+        models_tried.append(model_key)
+        label = _run_label(target_time, model_key, fxx)
+        try:
+            result = try_model_extraction(target_time, model_key, fxx,
+                                          lat, lon)
+        except Exception as e:
+            last_exception = e
+            skipped.append((f"{model_key} {label}", f"error: {e}"))
+            continue
+        if result[0] is None:
+            skipped.append((f"{model_key} {label}",
+                            "no temp (file missing or TMP extract failed)"))
+            continue
+        if _is_complete_result(model_key, result):
+            return _finish(model_key, result, label)
+        missing = [n for n, i in (("temp", 0), ("cloud", 2), ("wind", 3))
+                   if i in REQUIRED_MODEL_FIELDS and result[i] is None]
+        skipped.append((f"{model_key} {label}",
+                        f"incomplete, missing {'/'.join(missing)}"))
+        if partial is None:
+            partial = (model_key, result, label)
+    if partial is not None and accept_partial:
+        print(f"    valid {target_time.strftime('%d %H:%M')}Z: no complete "
+              f"run; using newest partial {partial[0]} ({partial[2]})")
+        return partial[0], partial[1], models_tried, last_exception
+    if skipped:
+        why = "; ".join(f"{lb}: {rs}" for lb, rs in skipped)
+        print(f"    valid {target_time.strftime('%d %H:%M')}Z: nothing "
+              f"usable [{why}]")
+    return None, (None, None, None, None, None), models_tried, last_exception
+
+
 def fetch_models(conn, lat, lon, start_time, end_time, force=False,
                  extend_future=True, enable_rrfs=False, tiers=None,
                  hrrr_max_lead=HRRR_MAX_LEAD, max_workers=1):
@@ -2160,7 +2296,8 @@ def fetch_models(conn, lat, lon, start_time, end_time, force=False,
     print(f"  Range: {start_time.strftime('%Y-%m-%d %H:%M')} -> "
           f"{end_time.strftime('%Y-%m-%d %H:%M')} UTC")
     print(f"  Mode: {mode_str}")
-    print(f"  Cascade: URMA -> RTMA -> HRRR f00 -> HRRR f01-f05 (forecast)")
+    print(f"  Cascade: URMA -> RTMA -> HRRR f00 -> HRRR f01-f{hrrr_max_lead:02d} "
+          f"(newest run first; older run only if missing/incomplete)")
     if extend_future:
         print(f"  Future extension: ENABLED (extends {hrrr_max_lead}h into forecast)")
     if force:
@@ -2170,6 +2307,23 @@ def fetch_models(conn, lat, lon, start_time, end_time, force=False,
     cursor = conn.cursor()
 
     now = datetime.now(timezone.utc)
+
+    # Anchor everything HRRR-related on the most recent run that is really
+    # published: T0 = its f00, then f01..f{max_lead} for the next hours.
+    latest_run = None
+    if tiers is None or "hrrr" in tiers:
+        try:
+            latest_run = find_latest_hrrr_run(now)
+        except Exception as e:
+            print(f"  (could not probe latest HRRR run: {e})")
+        if latest_run is not None:
+            print(f"  Most recent HRRR run available: "
+                  f"{latest_run.strftime('%Y-%m-%d %Hz')} -> forecast window "
+                  f"T0..T+{hrrr_max_lead} "
+                  f"({latest_run.strftime('%H:%M')}Z to "
+                  f"{(latest_run + timedelta(hours=hrrr_max_lead)).strftime('%H:%M')}Z)")
+        else:
+            print("  Most recent HRRR run: not found, using latency-based gate")
     current = start_time.replace(minute=0, second=0, microsecond=0)
     end_hour = end_time.replace(minute=0, second=0, microsecond=0)
 
@@ -2177,8 +2331,9 @@ def fetch_models(conn, lat, lon, start_time, end_time, force=False,
         # Extend the window to cover the full HRRR forecast range, not just
         # the next hour. This ensures f01-f06 get fetched for multiple hours
         # into the future, not just a single next-hour slot.
-        future_extension = (now.replace(minute=0, second=0, microsecond=0)
-                           + timedelta(hours=hrrr_max_lead))
+        _anchor = (latest_run if latest_run is not None
+                   else now.replace(minute=0, second=0, microsecond=0))
+        future_extension = _anchor + timedelta(hours=hrrr_max_lead)
         if end_hour < future_extension:
             end_hour = future_extension
         if end_hour > future_extension:
@@ -2214,7 +2369,8 @@ def fetch_models(conn, lat, lon, start_time, end_time, force=False,
 
         target_iso = target_time.isoformat()
         cascade = resolve_model_cascade(target_time, enable_rrfs=enable_rrfs,
-                                        tiers=tiers, hrrr_max_lead=hrrr_max_lead)
+                                        tiers=tiers, hrrr_max_lead=hrrr_max_lead,
+                                        latest_hrrr_run=latest_run)
 
         if not cascade:
             skipped += 1
@@ -2265,20 +2421,13 @@ def fetch_models(conn, lat, lon, start_time, end_time, force=False,
                 temp_f = temp_sd = cloud_cover = wind_speed = precip = None
                 chosen_model = None
 
-                for model_key, fxx in upgrade_candidates:
-                    try:
-                        result = try_model_extraction(
-                            target_time, model_key, fxx, lat, lon)
-                        (temp_f, temp_sd, cloud_cover,
-                         wind_speed, precip) = result
-
-                        if temp_f is not None:
-                            chosen_model = model_key
-                            break
-                    except Exception as e:
-                        print(f"  {model_key} upgrade failed for "
-                              f"{target_iso}: {e}")
-                        continue
+                # Complete results only: a partial extraction from a newer
+                # run must not replace an existing row.
+                chosen_model, result, _, _ = walk_cascade_newest_first(
+                    target_time, upgrade_candidates, lat, lon,
+                    accept_partial=False)
+                (temp_f, temp_sd, cloud_cover,
+                 wind_speed, precip) = result
 
                 if temp_f is not None and chosen_model is not None:
                     with conn:
@@ -2327,27 +2476,9 @@ def fetch_models(conn, lat, lon, start_time, end_time, force=False,
         models_tried = []
         last_exception = None
 
-        for model_key, fxx in cascade:
-            models_tried.append(model_key)
-            try:
-                result = try_model_extraction(
-                    target_time, model_key, fxx, lat, lon)
-                (temp_f, temp_sd, cloud_cover,
-                 wind_speed, precip) = result
-
-                if temp_f is not None:
-                    chosen_model = model_key
-                    break
-            except Exception as e:
-                last_exception = e
-                err_str = str(e).lower()
-                if len(cascade) > 1:
-                    if ("not found" not in err_str
-                            and "could not" not in err_str):
-                        print(f"  {model_key} failed for {target_iso}: {e}")
-                else:
-                    print(f"  {model_key} failed for {target_iso}: {e}")
-                continue
+        chosen_model, result, models_tried, last_exception = \
+            walk_cascade_newest_first(target_time, cascade, lat, lon)
+        (temp_f, temp_sd, cloud_cover, wind_speed, precip) = result
 
         if temp_f is not None and chosen_model is not None:
             if force:
