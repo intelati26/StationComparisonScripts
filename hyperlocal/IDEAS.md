@@ -6,10 +6,10 @@ Numbers are from the autumn 2026 data (1 Oct - 19 Nov) unless said otherwise; "M
 ## 1. Seasons and out-of-sample (the data is autumn only)
 - **Out-of-season retrospective run - open, highest value.** The station's Ambient history reaches back to at least Dec 2025, and URMA, HRRR and NBM archives go back years. A few nights a month through winter, spring and summer shows which terms drift, with no waiting. Free: URMA from the AWS files (about 2 s per hour), HRRR levels from Open-Meteo, NBM from the AWS archive; the station history through `ambient_history`.
   Hints that something drifts: the dewpoint bias is 0.6 F (NBM, summer) against 2.1 F (fall); the equation underpredicts cold nights (+1.1 F below 30 F) and overpredicts warm ones (-0.7 F above 60 F); a temperature term gained only 0.02 F in fall.
-- **Seasonal amplitude - open.** Leaf-on or leaf-off, soil moisture and snow probably change a site's amplitude. `amp.py` run for a fortnight in each season gives it (14 nights is enough for about +-2 F).
+- **Seasonal amplitude - open.** Leaf-on or leaf-off, soil moisture and snow probably change a site's amplitude. `analysis/amp.py` run for a fortnight in each season gives it (14 nights is enough for about +-2 F).
 - **Night length - open.** Fall nights are 11-14 h, summer nights about 9 h. The equation has a flat night (no time-of-night shape; the fitted amplitude of one was 0 in fall).
 - **Snow - partial.** Six usable snow nights, none both clear and calm; the two clear, calm snow-pack nights (25 and 27 Jan) moved the deficit by -0.3 to +0.2 F against autumn. Needs clear, calm nights inside a pack (after a storm passes), from other airports and winters (nearest-airport snow days: 8-14 per winter).
-- **A second Appalachian place - open.** The valley place gave the strongest terrain signal (amplitude vs elevation -0.98 over 7 stations). A second mountain place (a plateau cluster scanned at the same time had 9 stations spanning 1,100 ft) would show whether the rule repeats: about -3.8 F per 100 m above the valley floor, zero near 1,000 m.
+- **A second mountain place - open.** The valley place gave the strongest terrain signal (amplitude vs elevation -0.98 over 7 stations). A second mountain place (a plateau cluster scanned at the same time had 9 stations spanning 1,100 ft) would show whether the rule repeats: about -3.8 F per 100 m above the valley floor, zero near 1,000 m.
 
 ## 2. Forecast inputs (where the end-to-end error comes from)
 Forecast inputs cost 2.5 F against 0.8 F with analysis inputs. Keeping one input as a forecast while the others are analyses costs: dewpoint +0.68, cloud +0.39, temperature +0.33, wind aloft +0.26.
@@ -39,7 +39,7 @@ Typical amplitude 5 F, the station's own amplitude lowers the mean MAE of 36 sta
 - **A per-hour dewpoint fall in `low.py` - open.** See section 2.
 - **Scoring in the wild - partial.** `coldpool.py forecast` logs each run's prediction and the NWS hourly values (`log/forecasts.csv`, `log/nws_forecasts.csv`); score them against the station's actual low after a few weeks.
 - **Phone - blocked on a phone.** `termux/low.py` and `low-temp.sh` are tested on a desktop only: the Termux:API location, the widget shortcut and how the notification folds its body are untried.
-- **`spc925.py` hourly - open.** Run it from cron or Tasker on a night to collect SPC's 925 mb crops; SPC's HRRR and HREF viewers have no 925 mb winds (HREF has 850 mb only, and the app's HREF picture paths returned 404).
+- **`analysis/spc925.py` hourly - open.** Run it from cron or Tasker on a night to collect SPC's 925 mb crops; SPC's HRRR and HREF viewers have no 925 mb winds (HREF has 850 mb only, and the app's HREF picture paths returned 404).
 - **Desktop `forecast` on the 450 m wind - open.** The phone script and the live page use the wind 450 m above the ground; the desktop command still uses the 925 hPa wind.
 
 ## 6. Data and sources

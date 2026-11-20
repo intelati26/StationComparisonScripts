@@ -3,7 +3,7 @@
 Per WU station: mean (station temperature - URMA at the place's centre) over the clear, calm night hours, against the small-scale terrain indices."""
 import json, os, statistics as st, sys
 from datetime import datetime, timedelta, timezone
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import coldpool as c
 import terrain_local as TL
 

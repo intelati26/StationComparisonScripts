@@ -8,7 +8,7 @@ For each night hour: model temperature - station temperature = a + A x factor, f
 Prints A with a range from resampling nights, the offset a, and the quick check (the mean difference on the clearest, calmest, driest hours).  Put the result in .env as HYPERLOCAL_AMP."""
 import argparse, math, os, random, statistics as st, sys
 from datetime import datetime, timedelta, timezone
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import coldpool as c
 
 p = argparse.ArgumentParser()

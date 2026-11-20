@@ -3,7 +3,7 @@
   python end_to_end.py"""
 import json, math, os, statistics as st, sys
 from datetime import datetime, timedelta, timezone
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import coldpool as c
 
 cfg = c.load_config()

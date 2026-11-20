@@ -5,7 +5,7 @@ Only the index, then the UGRD and VGRD 925 mb messages (about 650 KB each) are r
 import json, math, os, subprocess, sys, tempfile, time, urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import coldpool as c
 
 c.load_env()

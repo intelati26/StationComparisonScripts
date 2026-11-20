@@ -7,12 +7,16 @@ import json, os, sys, time, urllib.error, urllib.parse, urllib.request
 from datetime import date, timedelta
 from pathlib import Path
 
-HERE = Path(__file__).parent
+HERE = Path(__file__).parent.parent
 for line in (HERE / ".env").read_text().splitlines():
     if "=" in line and not line.lstrip().startswith("#"):
         k, v = line.split("=", 1)
         os.environ.setdefault(k.strip(), v.strip())
 KEY = urllib.parse.quote(os.environ["WUNDERGROUND_API_KEY"])
+
+
+class Throttled(Exception):
+    pass
 
 
 def get(url):
@@ -28,6 +32,8 @@ def get(url):
         except urllib.error.HTTPError as e:
             if e.code == 204:
                 return None
+            if e.code == 401:                                     # "API key is throttled": the daily limit; stop and resume after the reset
+                raise Throttled()
             if e.code in (429, 500, 502, 503) and i < 4:
                 time.sleep(5 * (i + 1))
                 continue
@@ -44,6 +50,15 @@ def main(d0, d1):
     f = HERE / "log" / (f"wu_hourly_{site}.json" if site else "wu_hourly.json")
     data = json.loads(f.read_text()) if f.exists() else {}
     day0, day1 = date.fromisoformat(d0), date.fromisoformat(d1)
+    try:
+        run(chosen, data, f, day0, day1)
+    except Throttled:
+        f.write_text(json.dumps(data))
+        print("THROTTLED: daily limit reached; rerun after the reset (it resumes)", flush=True)
+        sys.exit(3)
+
+
+def run(chosen, data, f, day0, day1):
     for km, sid, name, la, lo, qc in chosen:
         st = data.setdefault(sid, {"km": km, "lat": la, "lon": lo, "elev_ft": None, "hours": {}, "days_done": []})
         if st["elev_ft"] is None:

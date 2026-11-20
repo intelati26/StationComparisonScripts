@@ -5,7 +5,7 @@ Only the index and the four messages (about 2 MB each) are requested; the point 
 import json, math, os, subprocess, sys, tempfile, urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import coldpool as c
 
 c.load_env()

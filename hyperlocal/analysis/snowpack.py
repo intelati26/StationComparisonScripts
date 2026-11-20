@@ -4,7 +4,7 @@ URMA at the station point (AWS GRIB) and the home group's Wunderground hourly da
 import json, math, os, statistics as st, sys, time, urllib.parse, urllib.request
 from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import coldpool as c
 
 c.load_env()
