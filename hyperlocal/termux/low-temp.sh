@@ -11,10 +11,12 @@ if [ -s "$json" ] && [ -f ~/low_plot.py ] && python -c "import matplotlib" 2>/de
 fi
 act=()
 if [ -n "$img" ]; then
-  # the viewer app cannot read Termux's private folder ("does not have permission to open"): open a copy in shared storage (run termux-setup-storage once to create ~/storage)
+  # the viewer app cannot read Termux's private folder ("does not have permission to open"): open a copy in shared storage, in the weather folder with the .env if there is one (run termux-setup-storage once to create ~/storage)
   show="$img"
+  dest=~/storage/dcim/weather
+  [ -d "$dest" ] || dest=~/storage/shared/Pictures
   if [ -d ~/storage/shared ]; then
-    mkdir -p ~/storage/shared/Pictures && cp "$img" ~/storage/shared/Pictures/low.png && show=~/storage/shared/Pictures/low.png
+    mkdir -p "$dest" && cp "$img" "$dest/low.png" && show="$dest/low.png"
   else
     echo "run termux-setup-storage once (and allow it) so tapping the notification can open the picture"
   fi
