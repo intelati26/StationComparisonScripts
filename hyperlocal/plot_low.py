@@ -4,7 +4,7 @@ It runs termux/low.py --json (so it uses the same place, amplitude and options f
    python plot_low.py [--back 18] [--png] [any low.py option, e.g. --amp 10 --nws]       -> log/low_plot_<time>.svg (and .png)"""
 import argparse, json, os, subprocess, sys
 from datetime import datetime, timedelta, timezone
-HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import matplotlib; matplotlib.use("Agg")
 import matplotlib.dates as mdates

@@ -2,15 +2,15 @@
 """Tonight's adjusted forecast into the plotter's database, so plotter.py draws it (dashed, with the +- SD band and a star at the predicted low).
 Runs termux/low.py --json (the same place, amplitude, bias and SD as the notification) and writes one model_analysis row per hour: model "coldpool_fc", temp_f = the forecast temperature minus the equation's drop (plus the bias), temp_sd = the SD of the predicted low.
 A new run replaces the rows of earlier runs from its first hour on; earlier hours keep the run that was current then, so the evening's forecast stays on the plot against what the station did.
-  python analysis/forecast_to_db.py [--db FILE] [low.py options]       the database is the collectors' and plotter's own: WEATHER_DB_PATH from .env (a relative path is relative to where you run this) unless --db is given; it must already have the model_analysis table, and only model coldpool_fc / coldpool_bf rows are touched. Needs WEATHER_LAT and WEATHER_LON (.env in the folder you run from, or hyperlocal/.env); HYPERLOCAL_AMP / _BIAS / _SD are optional
-  python analysis/forecast_to_db.py --backfill N [--db FILE]            the last N days reconstructed in hindsight from Open-Meteo's stitched HRRR hours (model "coldpool_bf", drawn dotted): a first multi-day plot before any forecasts have been kept; hours that already hold a real run are skipped
-  python analysis/forecast_to_db.py --from-log [FILE] [--db FILE]       writes every run low.py --log has kept (FILE, else HYPERLOCAL_LOG, else log/low_log.jsonl), oldest first: the previous nights' forecasts for the plotter to hold against what the station did"""
+  python forecast_to_db.py [--db FILE] [low.py options]       the database is the collectors' and plotter's own: WEATHER_DB_PATH from .env (a relative path is relative to where you run this) unless --db is given; it must already have the model_analysis table, and only model coldpool_fc / coldpool_bf rows are touched. Needs WEATHER_LAT and WEATHER_LON (.env in the folder you run from, or hyperlocal/.env); HYPERLOCAL_AMP / _BIAS / _SD are optional
+  python forecast_to_db.py --backfill N [--db FILE]            the last N days reconstructed in hindsight from Open-Meteo's stitched HRRR hours (model "coldpool_bf", drawn dotted): a first multi-day plot before any forecasts have been kept; hours that already hold a real run are skipped
+  python forecast_to_db.py --from-log [FILE] [--db FILE]       writes every run low.py --log has kept (FILE, else HYPERLOCAL_LOG, else log/low_log.jsonl), oldest first: the previous nights' forecasts for the plotter to hold against what the station did"""
 import json, os, sqlite3, subprocess, sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from datetime import datetime, timezone
 import coldpool as c
 
-c.load_env(); root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+c.load_env(); root = os.path.dirname(os.path.abspath(__file__))
 for k in ("WEATHER_LAT", "WEATHER_LON"):
     if not os.environ.get(k): sys.exit(f"{k} is not set (the .env of the collectors or of hyperlocal)")
 cfg = {"lat": float(os.environ["WEATHER_LAT"]), "lon": float(os.environ["WEATHER_LON"]), "db": os.environ.get("WEATHER_DB_PATH", "weather_archive.db")}      # only what this script uses: no valley/rim elevations needed
