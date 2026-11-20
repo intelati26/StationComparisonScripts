@@ -2,7 +2,7 @@
 """Tonight's adjusted forecast into the plotter's database, so plotter.py draws it (dashed, with the +- SD band and a star at the predicted low).
 Runs termux/low.py --json (the same place, amplitude, bias and SD as the notification) and writes one model_analysis row per hour: model "coldpool_fc", temp_f = the forecast temperature minus the equation's drop (plus the bias), temp_sd = the SD of the predicted low.
 A new run replaces the rows of earlier runs from its first hour on; earlier hours keep the run that was current then, so the evening's forecast stays on the plot against what the station did.
-  python forecast_to_db.py [--db FILE] [low.py options]       the database is the collectors' and plotter's own: WEATHER_DB_PATH from .env (a relative path is relative to where you run this) unless --db is given; the model_analysis table is created if the database has none, and only model coldpool_fc / coldpool_bf rows are touched. Needs WEATHER_LAT and WEATHER_LON (.env in the folder you run from, or hyperlocal/.env); HYPERLOCAL_AMP / _BIAS / _SD are optional
+  python forecast_to_db.py [--db FILE] [low.py options]       the database is the collectors' and plotter's own: WEATHER_DB_PATH from .env (a relative path is relative to the folder holding plotter.py, as for the collectors) unless --db is given; the model_analysis table is created if the database has none, and only model coldpool_fc / coldpool_bf rows are touched. Needs WEATHER_LAT and WEATHER_LON (.env in the folder you run from, or hyperlocal/.env); HYPERLOCAL_AMP / _BIAS / _SD are optional
   python forecast_to_db.py --backfill N [--db FILE]            the last N days reconstructed in hindsight from Open-Meteo's stitched HRRR hours (model "coldpool_bf", drawn dotted): a first multi-day plot before any forecasts have been kept; hours that already hold a real run are skipped
   python forecast_to_db.py --from-log [FILE] [--db FILE]       writes every run low.py --log has kept (FILE, else HYPERLOCAL_LOG, else log/low_log.jsonl), oldest first: the previous nights' forecasts for the plotter to hold against what the station did"""
 import json, os, sqlite3, subprocess, sys
@@ -17,8 +17,11 @@ cfg = {"lat": float(os.environ["WEATHER_LAT"]), "lon": float(os.environ["WEATHER
 args = sys.argv[1:]; db = None
 if "--db" in args:
     i = args.index("--db"); db = args[i + 1]; del args[i:i + 2]
-db = os.path.abspath(db or cfg["db"])                    # a relative WEATHER_DB_PATH means relative to where you run this, as for the collectors and plotter.py: run it from the folder you run them from
-if not os.path.exists(db): sys.exit(f"no database at {db} (set WEATHER_DB_PATH in .env, run this from the folder the collectors run in, or give --db)")
+# a relative WEATHER_DB_PATH is relative to the folder that holds plotter.py and weather_common.py (the repo root, one up from here), exactly as the collectors and the plotter read it
+repo = os.path.dirname(root) if os.path.exists(os.path.join(os.path.dirname(root), "weather_common.py")) else os.getcwd()
+db = db or cfg["db"]
+db = os.path.abspath(db if os.path.isabs(db) else os.path.join(repo, db))
+if not os.path.exists(db): sys.exit(f"no database at {db} (set WEATHER_DB_PATH in .env, or give --db)")
 print(f"database: {db}")
 def write(con, d):
     rows = []
