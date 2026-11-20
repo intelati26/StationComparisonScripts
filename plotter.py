@@ -41,13 +41,14 @@ import os
 import argparse
 import sqlite3
 from datetime import datetime, timezone, timedelta
+import math
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import matplotlib.ticker as mticker
 from astral import Observer
-from astral.sun import sun
+from astral.sun import sun, elevation
 import re
 
 def safe_filename(station):
@@ -116,6 +117,59 @@ def get_sunrise_sunset_for_date(date_obj, lat, lon):
         return s["sunrise"], s["sunset"]
     except Exception:
         return None, None
+
+
+def _haurwitz_from_elevation(elev_deg):
+    """Raw (uncorrected) Haurwitz clear-sky GHI estimate (W/m^2) from
+    solar elevation alone -- no turbidity/humidity/siting correction.
+    Kept in sync with calibrate_clearsky.py's copy of this same formula
+    (duplicated rather than shared so each script stays standalone --
+    see that script's header)."""
+    if elev_deg is None or elev_deg <= 0:
+        return 0.0
+    cos_z = math.cos(math.radians(90.0 - elev_deg))
+    if cos_z <= 0:
+        return 0.0
+    return max(1098.0 * cos_z * math.exp(-0.057 / cos_z), 0.0)
+
+
+def clear_sky_ghi(dt_utc, observer, calibration_points=None):
+    """Clear-sky global horizontal irradiance estimate (W/m^2) for one
+    moment. Starts from the raw Haurwitz formula, then applies an
+    empirical, elevation-binned correction if calibration_points is
+    given -- a sorted list of (elevation_mid_deg, factor) pairs, as
+    loaded from the clearsky_calibration table (see
+    calibrate_clearsky.py). Without calibration_points, this is just
+    the uncorrected formula -- a reference curve to eyeball measured-
+    vs-clear-sky cloudiness against, not a radiometric truth value."""
+    try:
+        elev_deg = elevation(observer, dt_utc)
+    except Exception:
+        return 0.0
+    raw = _haurwitz_from_elevation(elev_deg)
+    if not calibration_points or raw <= 0:
+        return raw
+    xs = [p[0] for p in calibration_points]
+    ys = [p[1] for p in calibration_points]
+    factor = float(np.interp(elev_deg, xs, ys))
+    return raw * factor
+
+
+def build_clear_sky_series(start_dt, end_dt, lat, lon, calibration_points=None,
+                           step_minutes=30):
+    """Hourly(ish)-resolution clear-sky reference curve across the plot
+    window. Built on a coarse regular grid and later interpolated
+    (method="time") onto whatever index the measured data uses, same
+    pattern as the model-vs-station reindexing elsewhere in this file --
+    calling astral's elevation() once per measured observation would be
+    needlessly slow for minutely station data."""
+    observer = Observer(latitude=lat, longitude=lon)
+    idx = pd.date_range(start_dt, end_dt, freq=f"{step_minutes}min", tz="UTC")
+    if len(idx) == 0:
+        return pd.Series(dtype=float)
+    values = [clear_sky_ghi(ts.to_pydatetime(), observer, calibration_points)
+              for ts in idx]
+    return pd.Series(values, index=idx)
 
 
 def get_analysis_frontier(conn, lat, lon, model_name="urma", until=None):
@@ -519,6 +573,120 @@ def render_windrose(df, cutoff, end_time, out_path=None, ax=None, show_calm=Fals
     return out_path
 
 
+def draw_cloudiness_panel(fig, ax, solar_df, sky_df, unified_cloud_cover,
+                          cutoff, plot_end, lat, lon,
+                          solar_col, sky_col, date_fmt, major_loc, minor_loc,
+                          calibration_points=None):
+    """Solar radiation (G6964) vs. a coarse clear-sky reference curve,
+    as a same-width panel stacked under the temperature/bias graphs.
+    Reference curve is a rough Haurwitz estimate (see clear_sky_ghi) --
+    good for eyeballing cloudy dips against a sunny baseline, not a
+    calibrated radiometric comparison. solar_df/sky_df are pre-loaded
+    (conn is already closed by the time this runs -- see the load site)."""
+
+    if solar_df.empty:
+        print("  [cloudiness] No solar radiation rows in this window -- "
+              "skipping panel.")
+        return False
+
+    solar_series = solar_df.set_index("timestamp")["solar"]
+    # Window may be narrower than what was loaded (plot_end can differ
+    # slightly from the now_utc upper bound used at load time).
+    solar_series = solar_series[(solar_series.index >= cutoff) & (solar_series.index <= plot_end)]
+    if solar_series.empty:
+        print("  [cloudiness] No solar radiation rows in this window -- "
+              "skipping panel.")
+        return False
+
+    clear_sky = build_clear_sky_series(cutoff, plot_end, lat, lon, calibration_points)
+
+    # Same reindex-then-interpolate(method="time") pattern used for the
+    # model bias band above -- an exact-match reindex of the coarse
+    # clear-sky grid onto the (much denser) measured index would return
+    # near-total NaN.
+    union_idx = solar_series.index.union(clear_sky.index)
+    clear_sky_aligned = clear_sky.reindex(union_idx).sort_index()
+    clear_sky_aligned = clear_sky_aligned.interpolate(method="time", limit_area="inside")
+    clear_sky_aligned = clear_sky_aligned.reindex(solar_series.index)
+
+    clear_sky_label = ("Clear-Sky Estimate (Haurwitz, calibrated)" if calibration_points
+                       else "Clear-Sky Estimate (Haurwitz, uncalibrated)")
+    ax.plot(clear_sky.index, clear_sky.values, color="goldenrod", linestyle="--",
+           linewidth=1.1, label=clear_sky_label, zorder=2)
+    ax.plot(solar_series.index, solar_series.values, color="darkorange",
+           linewidth=1.3, label=f"Measured Solar Radiation ({solar_col})", zorder=3)
+    # Shade the gap where measured falls short of the clear-sky curve --
+    # a quick visual stand-in for "cloudier than clear-sky at that hour".
+    ax.fill_between(solar_series.index, solar_series.values,
+                    clear_sky_aligned.values, where=(clear_sky_aligned.values > solar_series.values),
+                    color="dimgray", alpha=0.25, interpolate=True,
+                    label="Below Clear-Sky (cloudier)", zorder=2)
+
+    # --- MODEL CLOUD COVER (URMA->RTMA->HRRR cascade, same as ax1) ---
+    # Independent of the solar-geometry-derived comparison above -- this
+    # is the model's own TCDC (total cloud cover) field, already cascaded
+    # by unify_model_cascade the same way temp/precip are.
+    ax_cc = None
+    if unified_cloud_cover is not None and not unified_cloud_cover.empty:
+        cc = unified_cloud_cover[(unified_cloud_cover.index >= cutoff)
+                                  & (unified_cloud_cover.index <= plot_end)]
+        if not cc.empty:
+            ax_cc = ax.twinx()
+            ax_cc.plot(cc.index, cc.values, color="slategray", linewidth=1.3,
+                      linestyle="-.", label="Model Cloud Cover (URMA->RTMA->HRRR)",
+                      zorder=3)
+            ax_cc.set_ylabel("Model Cloud Cover (%)", fontsize=10, color="slategray")
+            ax_cc.set_ylim(0, 100)
+            ax_cc.tick_params(axis="y", colors="slategray")
+
+    # --- NIGHT SHADING (elevation <= 0 via sunrise/sunset) ---
+    day = cutoff.date()
+    end_date = plot_end.date()
+    while day <= end_date:
+        sunrise, sunset = get_sunrise_sunset_for_date(day, lat, lon)
+        prev_sunrise, prev_sunset = get_sunrise_sunset_for_date(day - timedelta(days=1), lat, lon)
+        if prev_sunset is not None and sunrise is not None:
+            ax.axvspan(max(prev_sunset, cutoff), min(sunrise, plot_end),
+                      color="navy", alpha=0.05, zorder=0)
+        day += timedelta(days=1)
+
+    # --- SKY COVER TICKS (METAR, if a usable column was found) ---
+    if sky_col and not sky_df.empty:
+        sky_df = sky_df[(sky_df["timestamp"] >= cutoff) & (sky_df["timestamp"] <= plot_end)]
+        if not sky_df.empty:
+            y_top = ax.get_ylim()[1]
+            for _, row in sky_df.iterrows():
+                # Hang DOWN from the top edge (va="top") rather than
+                # growing upward past it -- growing upward collided with
+                # the panel title, which sits just above the axes.
+                ax.annotate(str(row["sky"]), xy=(row["timestamp"], y_top),
+                           xytext=(0, -2), textcoords="offset points",
+                           rotation=90, fontsize=6, ha="center", va="top",
+                           color="dimgray", zorder=4)
+            print(f"  [cloudiness] {len(sky_df)} sky-cover ticks plotted "
+                  f"({sky_col}, KSGF/KBBG).")
+
+    ax.set_ylabel("Solar Radiation (W/m^2)", fontsize=10)
+    ax.set_xlim(cutoff, plot_end)
+    ax.xaxis.set_major_formatter(mdates.DateFormatter(date_fmt))
+    ax.xaxis.set_major_locator(major_loc)
+    ax.xaxis.set_minor_locator(minor_loc)
+    ax.set_xlabel("Time (UTC)", fontsize=10)
+
+    # Combine legend handles from both axes -- ax.legend() alone would
+    # miss the cloud_cover line, which lives on the twinned ax_cc.
+    handles, labels = ax.get_legend_handles_labels()
+    if ax_cc is not None:
+        cc_handles, cc_labels = ax_cc.get_legend_handles_labels()
+        handles += cc_handles
+        labels += cc_labels
+    ax.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, -0.32),
+             ncol=2, frameon=True, facecolor="white", framealpha=0.9, fontsize=8)
+    ax.set_title("Cloudiness: G6964 Solar Radiation vs. Clear-Sky Estimate "
+                 "& Model Cloud Cover", fontsize=10)
+    return True
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Generate weather station comparison and bias analysis plots."
@@ -540,6 +708,12 @@ def main():
     parser.add_argument("--no-model", action="store_true",
                         help="Skip the HRRR blend and forecast tail on the top "
                              "panel; URMA/RTMA (observation analysis) still plots")
+    parser.add_argument("--no-cloudiness", action="store_true",
+                        help=("Skip the solar-radiation-vs-clear-sky cloudiness "
+                              "panel added below the main two panels. On by "
+                              "default whenever station_obs has a populated "
+                              "solar radiation column for G6964 in the plotted "
+                              "window."))
     parser.add_argument("--windrose", action="store_true",
                         help=("Also render a wind rose (direction vs speed "
                               "frequency) for G6964 station data over the "
@@ -818,6 +992,76 @@ def main():
         print(f"  No wind_speed-like column found in station_obs. "
               f"Available columns: {sorted(existing_cols.values())}")
 
+    # --- SELECT SOLAR RADIATION COLUMN (schema-introspected, cloudiness panel) ---
+    # Same existence-isn't-enough caveat as the wind columns above: check
+    # actual non-null population in the plotted window, not just presence
+    # in the schema. G6964 is the only station with a light sensor.
+    SOLAR_COL_PRIORITY = [
+        "solar_radiation", "solarradiation", "solar_rad", "solar",
+    ]
+    solar_col = None
+    for cand in SOLAR_COL_PRIORITY:
+        if cand not in existing_cols:
+            continue
+        real = existing_cols[cand]
+        n = cursor.execute(
+            f"SELECT COUNT({real}) FROM station_obs "
+            f"WHERE station = 'G6964' AND timestamp >= ?", [cutoff_iso]
+        ).fetchone()[0]
+        if n > 0:
+            solar_col = real
+            break
+        else:
+            print(f"  [cloudiness] Skipping {real}: 0 non-null in this window.")
+    if solar_col is None:
+        # Broader fallback: anything with "solar" or "radiation" in the
+        # name that PRIORITY missed.
+        for lower_name, real in existing_cols.items():
+            if "solar" in lower_name or "radiation" in lower_name:
+                n = cursor.execute(
+                    f"SELECT COUNT({real}) FROM station_obs "
+                    f"WHERE station = 'G6964' AND timestamp >= ?", [cutoff_iso]
+                ).fetchone()[0]
+                if n > 0:
+                    solar_col = real
+                    break
+    if solar_col:
+        print(f"  Solar radiation source: {solar_col} (G6964)")
+    else:
+        print(f"  [cloudiness] No populated solar-radiation-like column "
+              f"found for G6964 in this window. Cloudiness panel will be "
+              f"skipped. Available columns: {sorted(existing_cols.values())}")
+
+    # --- SELECT SKY-COVER COLUMN, IF ANY (schema-introspected, cloudiness panel) ---
+    # METAR-style sky condition is categorical (station text, not
+    # station_obs-wide numeric), so this is a soft best-effort match --
+    # if nothing matches, the panel just skips the overlay rather than
+    # failing the whole plot.
+    SKY_COL_HINTS = ("sky", "cloud", "ceiling", "metar")
+    sky_col = None
+    for lower_name, real in existing_cols.items():
+        if any(hint in lower_name for hint in SKY_COL_HINTS):
+            n = cursor.execute(
+                f"SELECT COUNT({real}) FROM station_obs "
+                f"WHERE station IN ('KSGF', 'KBBG') AND timestamp >= ?",
+                [cutoff_iso]
+            ).fetchone()[0]
+            if n > 0:
+                sky_col = real
+                break
+    if sky_col:
+        sample_vals = [r[0] for r in cursor.execute(
+            f"SELECT DISTINCT {sky_col} FROM station_obs "
+            f"WHERE station IN ('KSGF', 'KBBG') AND {sky_col} IS NOT NULL "
+            f"AND timestamp >= ? LIMIT 5", [cutoff_iso]
+        ).fetchall()]
+        print(f"  Sky cover source: {sky_col} (KSGF/KBBG); sample values: {sample_vals}")
+    else:
+        print(f"  [cloudiness] No populated sky-cover-like column found "
+              f"for KSGF/KBBG. Sky-cover ticks will be skipped on the "
+              f"cloudiness panel (solar-vs-clear-sky still plots if "
+              f"available).")
+
     # --- LOAD G6964 STATION WIND SPEED (6h block badges) ---
     station_wind_series = pd.Series(dtype=float)
     if not df_stations.empty and wind_speed_col:
@@ -864,13 +1108,62 @@ def main():
                 print(f"  [windrose] No overlapping {wind_speed_col}+{wind_dir_col} "
                       f"rows in this timeframe. Skipping --windrose plot.")
 
+    # --- LOAD SOLAR RADIATION + SKY COVER FOR CLOUDINESS PANEL ---
+    # Queried here (conn still open) rather than inside the drawing
+    # function -- conn.close() below runs well before the figure/layout
+    # code that calls draw_cloudiness_panel, same reason windrose_df is
+    # already a DataFrame by the time it's drawn.
+    solar_df = pd.DataFrame()
+    if not args.no_cloudiness and solar_col:
+        solar_df = pd.read_sql(
+            f"SELECT timestamp, {solar_col} AS solar FROM station_obs "
+            f"WHERE station = 'G6964' AND {solar_col} IS NOT NULL "
+            f"AND timestamp >= ? AND timestamp <= ? ORDER BY timestamp",
+            conn, params=[cutoff_iso, now_utc.isoformat()], parse_dates=["timestamp"])
+        if not solar_df.empty:
+            solar_df["timestamp"] = pd.to_datetime(solar_df["timestamp"], utc=True)
+            solar_df = solar_df.sort_values("timestamp")
+            solar_df = solar_df[~solar_df["timestamp"].duplicated(keep="last")]
+
+    # Empirical, elevation-binned clear-sky correction for G6964, if
+    # calibrate_clearsky.py has been run (see that script). Absent/empty
+    # table just means clear_sky_ghi() falls back to raw Haurwitz.
+    calibration_points = []
+    if not args.no_cloudiness and solar_col:
+        try:
+            cal_rows = cursor.execute(
+                "SELECT elevation_bin_low, elevation_bin_high, correction_factor "
+                "FROM clearsky_calibration WHERE station = 'G6964' "
+                "ORDER BY elevation_bin_low"
+            ).fetchall()
+        except sqlite3.OperationalError:          # a database that has never had calibrate_clearsky.py / init_db run: same as an empty table
+            cal_rows = []
+        calibration_points = [((lo + hi) / 2.0, factor) for lo, hi, factor in cal_rows]
+        if calibration_points:
+            print(f"  [cloudiness] Using {len(calibration_points)} empirical "
+                  f"calibration bins for the clear-sky curve (G6964).")
+        else:
+            print(f"  [cloudiness] No clearsky_calibration rows for G6964 -- "
+                  f"clear-sky curve uses raw Haurwitz. Run "
+                  f"calibrate_clearsky.py to improve this.")
+
+    sky_df = pd.DataFrame()
+    if not args.no_cloudiness and sky_col:
+        sky_df = pd.read_sql(
+            f"SELECT timestamp, station, {sky_col} AS sky FROM station_obs "
+            f"WHERE station IN ('KSGF', 'KBBG') AND {sky_col} IS NOT NULL "
+            f"AND timestamp >= ? AND timestamp <= ? ORDER BY timestamp",
+            conn, params=[cutoff_iso, now_utc.isoformat()], parse_dates=["timestamp"])
+        if not sky_df.empty:
+            sky_df["timestamp"] = pd.to_datetime(sky_df["timestamp"], utc=True)
+
     # --- LOAD MODEL DATA ---
     # No upper bound here (deliberately) -- future HRRR forecast rows past
     # "now" are wanted for the forecast-extension display, only the lower
     # bound trims years of backfilled history we're not plotting.
     df_model = pd.read_sql(
-        "SELECT model, valid_time, temp_f, temp_sd, precip FROM model_analysis "
-        "WHERE valid_time >= ? ORDER BY valid_time",
+        "SELECT model, valid_time, temp_f, temp_sd, precip, cloud_cover "
+        "FROM model_analysis WHERE valid_time >= ? ORDER BY valid_time",
         conn, params=[cutoff_iso], parse_dates=["valid_time"])
 
     # Cold-pool rows (written by hyperlocal/forecast_to_db.py and adjusted_to_db.py): say what was found, so an empty plot is explained.
@@ -903,10 +1196,16 @@ def main():
             pivoted_precip = df_model.pivot(index="valid_time", columns="model", values="precip")
         else:
             pivoted_precip = pd.DataFrame()
+
+        if "cloud_cover" in df_model.columns:
+            pivoted_cloud_cover = df_model.pivot(index="valid_time", columns="model", values="cloud_cover")
+        else:
+            pivoted_cloud_cover = pd.DataFrame()
     else:
         pivoted_models = pd.DataFrame()
         pivoted_sd = pd.DataFrame()
         pivoted_precip = pd.DataFrame()
+        pivoted_cloud_cover = pd.DataFrame()
 
     # --- COLD-POOL ADJUSTED ANALYSIS (optional: model "coldpool" rows, made by hyperlocal/adjusted_to_db.py) ---
     # URMA minus the equation's drop (what a sheltered site should read on a calm, clear night). Kept out of the
@@ -943,6 +1242,11 @@ def main():
     # --- UNIFY MODEL CASCADE ---
     unified_model, unified_sd = unify_model_cascade(pivoted_models, pivoted_sd)
     unified_precip = _unify_pivoted_column(pivoted_precip)
+    # Same best-tier-wins cascade (URMA -> RTMA -> HRRR) as temp/precip
+    # above -- for the cloudiness panel, plotted alongside measured solar
+    # radiation as an independent (model, not solar-geometry-derived)
+    # cloudiness signal.
+    unified_cloud_cover = _unify_pivoted_column(pivoted_cloud_cover)
 
     # model_for_bias/sd_for_bias are the single source of truth for BOTH
     # the top-panel line and the bottom-panel bias math -- previously the
@@ -1776,6 +2080,60 @@ def main():
         print(f"  (layout of the legend and summary box fell back to fixed positions: {_e})")
         _stacked = False
 
+    chain_bottom_frac = box_bottom if _stacked else (min(box_bottom, 0.0) - 0.06)
+
+    def _place_below(axx, top_frac, pad=0.010):
+        """Move `axx` down so that its tight bounding box (title, tick labels, axis label, legend) starts `pad` under `top_frac`; returns its new bottom edge.
+        Measured, so no fixed clearances: whatever a block carries with it is accounted for."""
+        # Titles, aspect boxes and the like are only settled by a draw, so run a layout-only draw first and measure with ITS renderer.
+        fig.draw_without_rendering()
+        _rr = fig._get_renderer()
+        bb = axx.get_tightbbox(_rr)
+        from matplotlib.transforms import Bbox
+        _lg = axx.get_legend()                                   # an axes' tight bbox leaves its legend out: add it
+        if _lg is not None and _lg.get_visible():
+            bb = Bbox.union([bb, _lg.get_window_extent(_rr)])
+        (_x0, _y0), (_x1, _y1) = _to_fig.transform(bb.get_points())
+        dy = (top_frac - pad) - _y1
+        p = axx.get_position()
+        axx.set_position([p.x0, p.y0 + dy, p.width, p.height])
+        return _y0 + dy
+
+    # --- OPTIONAL CLOUDINESS PANEL (solar radiation vs. clear-sky) ---
+    # Appended below the bias panel's stack as its own axes (figure-fraction below y=0; savefig's tight bbox extends the canvas), then moved
+    # into place by its measured extents so its title, labels and legend are all accounted for.
+    cloudiness_drawn = False
+    if not args.no_cloudiness and solar_col:
+        CLOUD_HEIGHT_INCHES = 2.4
+        pos2 = ax2.get_position()
+        cloud_height_frac = CLOUD_HEIGHT_INCHES / new_fig_h
+        if _stacked:
+            cloud_ax = fig.add_axes([pos2.x0, chain_bottom_frac - 0.3 - cloud_height_frac, pos2.width, cloud_height_frac])
+        else:
+            cloud_top_frac = chain_bottom_frac - 0.6 / new_fig_h
+            cloud_ax = fig.add_axes([pos2.x0, cloud_top_frac - cloud_height_frac, pos2.width, cloud_height_frac])
+        cloudiness_drawn = draw_cloudiness_panel(
+            fig, cloud_ax, solar_df, sky_df, unified_cloud_cover,
+            cutoff, plot_end, args.lat, args.lon,
+            solar_col, sky_col, date_fmt, major_loc, minor_loc,
+            calibration_points)
+
+        if cloudiness_drawn:
+            if _stacked:
+                # the panel's legend is anchored by a fixed fraction below its axis; tuck it right under the measured axis label instead
+                fig.draw_without_rendering()
+                _rrc = fig._get_renderer()
+                _lgc = cloud_ax.get_legend()
+                if _lgc is not None:
+                    _pc = cloud_ax.get_position()
+                    _abc = _to_fig.transform(cloud_ax.xaxis.get_tightbbox(_rrc).get_points())[0][1]
+                    _lgc.set_bbox_to_anchor((0.5, (_abc - 0.008 - _pc.y0) / _pc.height), transform=cloud_ax.transAxes)
+                chain_bottom_frac = _place_below(cloud_ax, chain_bottom_frac)
+            else:
+                chain_bottom_frac = cloud_top_frac - cloud_height_frac - 0.09
+        else:
+            fig.delaxes(cloud_ax)
+
     # --- OPTIONAL WINDROSE SECTION (--windrose) ---
     # Added as its own axes positioned BELOW the figure's nominal y=0
     # (figure-fraction coordinates, same trick the daily summary box
@@ -1795,23 +2153,20 @@ def main():
             windrose_end = min(now_utc, plot_end)
 
             WINDROSE_HEIGHT_INCHES = 4.4
-            WINDROSE_GAP_INCHES = 1.0 if _stacked else 0.5            # the rose's own two-line title sits above its axes, so it needs room under the summary box
-            # Clearance below y=0 for ax2's own legend, which is anchored
-            # at bbox_to_anchor=(0.5, -0.18) in AXES-fraction (not figure-
-            # fraction) coordinates and so isn't captured by box_bottom
-            # (that only accounts for the daily summary box, when drawn).
-            LEGEND_CLEARANCE_FRAC = 0.0 if _stacked else 0.06
-
-            windrose_top_frac = ((box_bottom if _stacked else min(box_bottom, 0.0)) - LEGEND_CLEARANCE_FRAC
-                                  - WINDROSE_GAP_INCHES / new_fig_h)
-            windrose_height_frac = WINDROSE_HEIGHT_INCHES / new_fig_h
+            WINDROSE_GAP_INCHES = 0.5
+            # chain_bottom_frac is the bottom of everything stacked so far (bias panel's axis, legend, summary box, cloudiness panel), measured
+            # when the measurement worked; the rose is then moved by its own measured extents (title, labels, legend) below.
+            windrose_top_frac = chain_bottom_frac - (0.0 if _stacked else WINDROSE_GAP_INCHES / new_fig_h)
+            # A polar axes forces itself square; a box that is not exactly square gets shrunk at draw time, and differently in savefig's tight-bbox pass than in the first one, which moved its title
+            # (and made it overlap the panel above). An exactly square box is never adjusted, so every pass agrees.
+            windrose_side_inches = min(WINDROSE_HEIGHT_INCHES, fig_w * 0.42)
+            windrose_height_frac = windrose_side_inches / new_fig_h
             windrose_bottom_frac = windrose_top_frac - windrose_height_frac
 
             # Keep it roughly square rather than stretching it across the
             # full figure width, which would just leave the compass rose
             # small in the middle of a lot of empty horizontal space.
-            windrose_width_inches = min(WINDROSE_HEIGHT_INCHES * 0.95, fig_w * 0.42)
-            windrose_width_frac = windrose_width_inches / fig_w
+            windrose_width_frac = windrose_side_inches / fig_w
             windrose_left_frac = (1.0 - windrose_width_frac) / 2.0
 
             windrose_ax = fig.add_axes(
@@ -1820,6 +2175,8 @@ def main():
                 projection="polar")
             render_windrose(windrose_df, cutoff, windrose_end, ax=windrose_ax,
                             show_calm=args.windrose_show_calm)
+            if _stacked:
+                chain_bottom_frac = _place_below(windrose_ax, chain_bottom_frac, pad=0.010 + (24.0 / 72.0) / new_fig_h)       # the rose's title sits 24 pt above its axes; savefig's tight pass places it that much higher than the first layout measures
         else:
             print("  [windrose] Skipped -- no wind_speed+direction data in this timeframe.")
 
