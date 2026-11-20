@@ -118,13 +118,15 @@ def get_sunrise_sunset_for_date(date_obj, lat, lon):
         return None, None
 
 
-def get_analysis_frontier(conn, lat, lon, model_name="urma"):
+def get_analysis_frontier(conn, lat, lon, model_name="urma", until=None):
+    """Latest analysis valid time; `until` (a Timestamp) caps it, for a window that ended in the past."""
     cursor = conn.cursor()
-    cursor.execute(
-        """SELECT MAX(valid_time) FROM model_analysis
-           WHERE model = ? AND ABS(latitude - ?) < 0.05 AND ABS(longitude - ?) < 0.05""",
-        (model_name, lat, lon),
-    )
+    sql = """SELECT MAX(valid_time) FROM model_analysis
+           WHERE model = ? AND ABS(latitude - ?) < 0.05 AND ABS(longitude - ?) < 0.05"""
+    params = [model_name, lat, lon]
+    if until is not None:
+        sql += " AND valid_time <= ?"; params.append(until.isoformat())
+    cursor.execute(sql, params)
     row = cursor.fetchone()
     if row and row[0]:
         return pd.to_datetime(row[0], utc=True)
@@ -568,11 +570,18 @@ def main():
     # this buffer has nothing left to serve on either end.
     model_lead_hours = 0.0 if args.no_model else FORECAST_EXT_HOURS
 
+    historical = False
     if args.start_date:
         start_time = pd.to_datetime(args.start_date, utc=True)
         end_time = pd.to_datetime(args.end_date, utc=True) if args.end_date else now_utc
         if end_time > now_utc:
             end_time = now_utc
+        # A window that ended in the past: treat its end as "now", so the
+        # 14-day limit, the frontier ages, the future/forecast logic and the
+        # per-day cut-offs all measure from the window, not from today.
+        historical = end_time < now_utc
+        if historical:
+            now_utc = end_time
         lookback_hours = (now_utc - start_time).total_seconds() / 3600
         print(f"Date range: {start_time.strftime('%Y-%m-%d %H:%M')} -> "
               f"{end_time.strftime('%Y-%m-%d %H:%M')} UTC")
@@ -864,8 +873,8 @@ def main():
         "WHERE valid_time >= ? ORDER BY valid_time",
         conn, params=[cutoff_iso], parse_dates=["valid_time"])
 
-    urma_frontier = get_analysis_frontier(conn, args.lat, args.lon, "urma")
-    rtma_frontier = get_analysis_frontier(conn, args.lat, args.lon, "rtma")
+    urma_frontier = get_analysis_frontier(conn, args.lat, args.lon, "urma", now_utc if historical else None)
+    rtma_frontier = get_analysis_frontier(conn, args.lat, args.lon, "rtma", now_utc if historical else None)
 
     conn.close()
 
@@ -887,6 +896,17 @@ def main():
         pivoted_models = pd.DataFrame()
         pivoted_sd = pd.DataFrame()
         pivoted_precip = pd.DataFrame()
+
+    # --- COLD-POOL ADJUSTED ANALYSIS (optional: model "coldpool" rows, made by hyperlocal/adjusted_to_db.py) ---
+    # URMA minus the equation's drop (what a sheltered site should read on a calm, clear night). Kept out of the
+    # cascade: it is drawn as its own line in the top panel and as a second bias line in the bottom one.
+    coldpool_series = None
+    if "coldpool" in pivoted_models.columns:
+        coldpool_series = pivoted_models["coldpool"].dropna()
+        coldpool_series.index = pd.to_datetime(coldpool_series.index, utc=True)
+        pivoted_models = pivoted_models.drop(columns=["coldpool"])
+        if "coldpool" in pivoted_sd.columns:
+            pivoted_sd = pivoted_sd.drop(columns=["coldpool"])
 
     # --- UNIFY MODEL CASCADE ---
     unified_model, unified_sd = unify_model_cascade(pivoted_models, pivoted_sd)
@@ -1138,6 +1158,12 @@ def main():
                          linestyle=":", linewidth=1.8, marker="o", markersize=4,
                          color="purple", alpha=0.7,
                          label="HRRR model (after analysis frontier)")
+
+            if coldpool_series is not None:
+                cp = coldpool_series[(coldpool_series.index >= cutoff) & (coldpool_series.index <= plot_end)].resample("1h").mean()
+                if cp.notna().any():                      # hourly, so the line breaks across the daytime hours it has no values for
+                    ax1.plot(cp.index, cp.values, linestyle="-", linewidth=1.6, marker="o", markersize=3,
+                             color="seagreen", label="URMA adjusted (cold-pool equation, night)")
 
             if not sd_for_bias.empty:
                 sub_sd = sd_for_bias.reindex(sub_unified.index)
@@ -1392,6 +1418,17 @@ def main():
 
             ax2.plot(timestamps, rolling_bias, linestyle="-", linewidth=2.0, color="darkred",
                      zorder=3, label="3-Hr Rolling Average Bias")
+
+            if coldpool_series is not None:
+                cp = coldpool_series[(coldpool_series.index >= cutoff) & (coldpool_series.index <= now_utc)].resample("1h").mean()
+                st_at = combined_df["station_interpolated"].reindex(cp.index)
+                cp_err = (cp - st_at).dropna()
+                if not cp_err.empty:
+                    cp_err = cp_err.reindex(cp.index)         # NaN between the nights, so the line breaks there
+                    ax2.plot(cp_err.index, cp_err.values, linestyle="-", linewidth=1.6, marker="o", markersize=3,
+                             color="seagreen", zorder=4, label="Bias after cold-pool adjustment")
+                    print(f"  Cold-pool adjusted: mean error {cp_err.mean():+.2f} F, mean abs {cp_err.abs().mean():.2f} F over {cp_err.notna().sum()} night hours "
+                          f"(URMA alone on the same hours: {(model_df['model_val'].reindex(cp.index) - st_at).dropna().reindex(cp_err.dropna().index).mean():+.2f} F)")
 
             ax2.axhline(0, color="black", linestyle="-", linewidth=0.8, alpha=0.7, zorder=1)
 
