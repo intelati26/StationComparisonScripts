@@ -111,7 +111,7 @@ def print_existing_calibration(cursor, station):
 
 def fit_calibration(conn, station, lat, lon, bin_size, percentile,
                      min_samples, min_elevation, start_dt, end_dt,
-                     method="percentile", clear_kmax=0.6, clear_kmean=0.5, clear_rough=0.04):
+                     method="percentile", clear_kmax=0.6, clear_kmean=0.5, clear_rough=0.04, show_days=False):
     cursor = conn.cursor()
 
     query = (
@@ -193,6 +193,11 @@ def fit_calibration(conn, station, lat, lon, bin_size, percentile,
         days["rough"] = usable.groupby("day").apply(_rough, include_groups=False)
         ok = days[(days["n"] >= 14) & (days["kmax"] >= clear_kmax) & (days["kmean"] >= clear_kmean) & (days["rough"] < clear_rough)].index
         print(f"  {len(ok)} of {len(days)} days classified clear (bright and smooth); fitting the median clearness of those days per elevation bin.")
+        if show_days:
+            sel = days.loc[ok]
+            print("  clear days used (month: date meanKT/roughness):")
+            for mon, g in sel.groupby(sel.index.to_period("M")):
+                print(f"    {mon}: " + "  ".join(f"{d.day:02d} {r.kmean:.2f}/{r.rough:.3f}" for d, r in g.iterrows()))
         if len(ok) < 5:
             print("Too few clear days to fit a ceiling. Loosen --clear-kmax / --clear-rough or use --method percentile.")
             return None
@@ -302,6 +307,9 @@ def main():
                         help="clear-days: a clear day's mean clearness index is at least this (default 0.5)")
     parser.add_argument("--clear-rough", type=float, default=0.04,
                         help="clear-days: a clear day's roughness (mean |second difference| / peak, at 15-minute steps) is below this (default 0.04)")
+    parser.add_argument("--show-days", action="store_true",
+                        help="clear-days: also print every day that was classified clear (date, mean clearness, roughness), grouped by month, "
+                             "so the choice can be checked by eye against the plot")
     parser.add_argument("--refresh", action="store_true",
                         help="Recompute and overwrite any existing "
                              "calibration for this station. Without "
@@ -342,6 +350,7 @@ def main():
             conn, args.station, lat, lon, args.bin_size, args.percentile,
             args.min_samples, args.min_elevation, start_dt, end_dt,
             method=args.method, clear_kmax=args.clear_kmax, clear_kmean=args.clear_kmean, clear_rough=args.clear_rough,
+            show_days=args.show_days,
         )
         if results is None:
             sys.exit(1)
