@@ -17,11 +17,14 @@ cfg = {"lat": float(os.environ["WEATHER_LAT"]), "lon": float(os.environ["WEATHER
 args = sys.argv[1:]; db = None
 if "--db" in args:
     i = args.index("--db"); db = args[i + 1]; del args[i:i + 2]
-# a relative WEATHER_DB_PATH is relative to the folder that holds plotter.py and weather_common.py (the repo root, one up from here), exactly as the collectors and the plotter read it
-repo = os.path.dirname(root) if os.path.exists(os.path.join(os.path.dirname(root), "weather_common.py")) else os.getcwd()
-db = db or cfg["db"]
-db = os.path.abspath(db if os.path.isabs(db) else os.path.join(repo, db))
-if not os.path.exists(db): sys.exit(f"no database at {db} (set WEATHER_DB_PATH in .env, or give --db)")
+# A relative WEATHER_DB_PATH: the collectors and plotter read it relative to their own folder, whose place differs between layouts (the repo root, or a home folder with the collectors in a child folder),
+# so the places it could be are tried in order: the folder above this one, the folder you run it from, and the folder above that: the first that holds the file is used.
+here = os.path.dirname(os.path.abspath(__file__)); rel = db or cfg["db"]
+if os.path.isabs(rel): tried = [rel]
+else: tried = [os.path.abspath(os.path.join(p, rel)) for p in (os.path.dirname(here), os.getcwd(), os.path.dirname(os.getcwd()), here)]
+tried = list(dict.fromkeys(tried))
+db = next((p for p in tried if os.path.exists(p)), None)
+if db is None: sys.exit("no database found; looked for:\n  " + "\n  ".join(tried) + "\n(set WEATHER_DB_PATH in .env, or give --db with the full path)")
 print(f"database: {db}")
 def write(con, d):
     rows = []
@@ -36,6 +39,7 @@ def write(con, d):
 
 con = sqlite3.connect(db, timeout=60)                    # a collector may be writing at the same time
 if not con.execute("SELECT 1 FROM sqlite_master WHERE name='model_analysis'").fetchone():
+    print("tables in that database:", [r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY 1")])
     # a database the model collectors have not run against yet: create the table exactly as weather_common.py does (they use CREATE TABLE IF NOT EXISTS, so they carry on with it)
     con.execute("""CREATE TABLE IF NOT EXISTS model_analysis (
     model TEXT NOT NULL, valid_time TEXT NOT NULL, latitude REAL NOT NULL, longitude REAL NOT NULL,
