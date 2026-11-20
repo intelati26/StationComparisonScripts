@@ -2,7 +2,7 @@
 """Tonight's adjusted forecast into the plotter's database, so plotter.py draws it (dashed, with the +- SD band and a star at the predicted low).
 Runs termux/low.py --json (the same place, amplitude, bias and SD as the notification) and writes one model_analysis row per hour: model "coldpool_fc", temp_f = the forecast temperature minus the equation's drop (plus the bias), temp_sd = the SD of the predicted low.
 A new run replaces the rows of earlier runs from its first hour on; earlier hours keep the run that was current then, so the evening's forecast stays on the plot against what the station did.
-  python analysis/forecast_to_db.py [--db FILE] [low.py options]       the database is WEATHER_DB_PATH from .env unless --db is given; it must already have the plotter's model_analysis table
+  python analysis/forecast_to_db.py [--db FILE] [low.py options]       the database is the collectors' and plotter's own: WEATHER_DB_PATH from .env (a relative path is relative to where you run this) unless --db is given; it must already have the model_analysis table, and only model coldpool_fc / coldpool_bf rows are touched
   python analysis/forecast_to_db.py --backfill N [--db FILE]            the last N days reconstructed in hindsight from Open-Meteo's stitched HRRR hours (model "coldpool_bf", drawn dotted): a first multi-day plot before any forecasts have been kept; hours that already hold a real run are skipped
   python analysis/forecast_to_db.py --from-log [FILE] [--db FILE]       writes every run low.py --log has kept (FILE, else HYPERLOCAL_LOG, else log/low_log.jsonl), oldest first: the previous nights' forecasts for the plotter to hold against what the station did"""
 import json, os, sqlite3, subprocess, sys
@@ -14,9 +14,9 @@ c.load_env(); cfg = c.load_config(); root = os.path.dirname(os.path.dirname(os.p
 args = sys.argv[1:]; db = None
 if "--db" in args:
     i = args.index("--db"); db = args[i + 1]; del args[i:i + 2]
-db = db or cfg["db"]
-if not os.path.isabs(db): db = os.path.join(root, db)
-if not os.path.exists(db): sys.exit(f"no database at {db} (set WEATHER_DB_PATH in .env or give --db)")
+db = os.path.abspath(db or cfg["db"])                    # a relative WEATHER_DB_PATH means relative to where you run this, as for the collectors and plotter.py: run it from the folder you run them from
+if not os.path.exists(db): sys.exit(f"no database at {db} (set WEATHER_DB_PATH in .env, run this from the folder the collectors run in, or give --db)")
+print(f"database: {db}")
 def write(con, d):
     rows = []
     for h in d["hours"]:
@@ -28,7 +28,7 @@ def write(con, d):
     return rows
 
 
-con = sqlite3.connect(db)
+con = sqlite3.connect(db, timeout=60)                    # a collector may be writing at the same time
 if not con.execute("SELECT 1 FROM sqlite_master WHERE name='model_analysis'").fetchone(): sys.exit("that database has no model_analysis table (the plotter's)")
 if "--backfill" in args:
     import math, time, urllib.parse, urllib.request
