@@ -170,9 +170,18 @@ def grib_points(model_key, target_time, points):
     def one(item):
         name, (a, b) = item
         req = urllib.request.Request(base, headers={"Range": f"bytes={a}-{b if b is not None else ''}"})
-        with tempfile.NamedTemporaryFile(suffix=".grb2") as f:
-            f.write(urllib.request.urlopen(req, timeout=120).read()); f.flush()
-            out = subprocess.run(["gdallocationinfo", "-valonly", "-wgs84", f.name], input=coords, capture_output=True, text=True).stdout.split()
+        # The file is closed before gdallocationinfo opens it (Windows will not let a second program open a temp file that is still open), and the points go in as bytes (no newline translation).
+        import os as _os
+        fd, path = tempfile.mkstemp(suffix=".grb2")
+        try:
+            with _os.fdopen(fd, "wb") as f:
+                f.write(urllib.request.urlopen(req, timeout=120).read())
+            out = subprocess.run(["gdallocationinfo", "-valonly", "-wgs84", path], input=coords.encode(), capture_output=True).stdout.decode(errors="replace").split()
+        finally:
+            try:
+                _os.remove(path)
+            except OSError:
+                pass
         vals = [float(x) for x in out]
         if len(vals) != len(points):
             raise ValueError("gdallocationinfo returned the wrong number of values")
