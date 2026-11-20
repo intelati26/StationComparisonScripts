@@ -908,6 +908,18 @@ def main():
         if "coldpool" in pivoted_sd.columns:
             pivoted_sd = pivoted_sd.drop(columns=["coldpool"])
 
+    # --- ADJUSTED FORECAST (optional: model "coldpool_fc" rows, written by hyperlocal/analysis/forecast_to_db.py) ---
+    # The forecast temperature minus the equation's drop, one row per hour of tonight; temp_sd holds the SD of the predicted low. Drawn as its own dashed line, never mixed into the cascade.
+    fc_series = fc_sd = None
+    if "coldpool_fc" in pivoted_models.columns:
+        fc_series = pivoted_models["coldpool_fc"].dropna()
+        fc_series.index = pd.to_datetime(fc_series.index, utc=True)
+        pivoted_models = pivoted_models.drop(columns=["coldpool_fc"])
+        if "coldpool_fc" in pivoted_sd.columns:
+            fc_sd = pivoted_sd["coldpool_fc"].dropna()
+            fc_sd.index = pd.to_datetime(fc_sd.index, utc=True)
+            pivoted_sd = pivoted_sd.drop(columns=["coldpool_fc"])
+
     # --- UNIFY MODEL CASCADE ---
     unified_model, unified_sd = unify_model_cascade(pivoted_models, pivoted_sd)
     unified_precip = _unify_pivoted_column(pivoted_precip)
@@ -1014,6 +1026,12 @@ def main():
             future_hours = (plot_end - now_utc).total_seconds() / 3600
             print(f"\n  Model forecast extends {future_hours:.1f}h into future — "
                   f"plot window extended to {plot_end.strftime('%H:%M')} UTC")
+
+    if fc_series is not None and not historical:             # leave room for up to 24 h of the adjusted forecast after now
+        fc_future = fc_series[fc_series.index > now_utc]
+        if not fc_future.empty:
+            plot_end = max(plot_end, min(fc_future.index.max(), now_utc + pd.Timedelta(hours=24)))
+            print(f"\n  Adjusted forecast (cold-pool equation) to {fc_future.index.max().strftime('%Y-%m-%d %H:%M')} UTC; lowest {fc_future.min():.1f} F")
 
     print_sd_coverage_diagnostic(unified_sd, cutoff, plot_end, args.lat, args.lon)
 
@@ -1159,12 +1177,6 @@ def main():
                          color="purple", alpha=0.7,
                          label="HRRR model (after analysis frontier)")
 
-            if coldpool_series is not None:
-                cp = coldpool_series[(coldpool_series.index >= cutoff) & (coldpool_series.index <= plot_end)].resample("1h").mean()
-                if cp.notna().any():                      # hourly, so the line breaks across the daytime hours it has no values for
-                    ax1.plot(cp.index, cp.values, linestyle="-", linewidth=1.6, marker="o", markersize=3,
-                             color="seagreen", label="URMA adjusted (cold-pool equation, night)")
-
             if not sd_for_bias.empty:
                 sub_sd = sd_for_bias.reindex(sub_unified.index)
                 if sub_sd.notna().any():
@@ -1175,6 +1187,28 @@ def main():
                     ax1.fill_between(sub_unified.index, sub_unified - sub_sd, sub_unified + sub_sd,
                                      color="purple", alpha=0.12, linewidth=0,
                                      label="Model Spatial Stencil SD (+/-1sigma, real values only)")
+
+    # The URMA-adjusted line and tonight's adjusted forecast (own model rows) are drawn whatever --no-model says.
+    if coldpool_series is not None:
+        cp = coldpool_series[(coldpool_series.index >= cutoff) & (coldpool_series.index <= plot_end)].resample("1h").mean()
+        if cp.notna().any():                      # hourly, so the line breaks across the daytime hours it has no values for
+            ax1.plot(cp.index, cp.values, linestyle="-", linewidth=1.6, marker="o", markersize=3,
+                     color="seagreen", label="URMA adjusted (cold-pool equation, night)")
+
+    if fc_series is not None:
+        fc = fc_series[(fc_series.index >= cutoff) & (fc_series.index <= plot_end)].resample("1h").mean()
+        if fc.notna().any():                      # dashed, with the +- SD of the predicted low and a star at the lowest hour
+            ax1.plot(fc.index, fc.values, linestyle="--", linewidth=1.8, marker="o", markersize=3, color="seagreen",
+                     label="adjusted forecast (HRRR + cold-pool equation)")
+            if fc_sd is not None:
+                sdf = fc_sd[(fc_sd.index >= cutoff) & (fc_sd.index <= plot_end)].resample("1h").mean().reindex(fc.index)
+                if sdf.notna().any():
+                    ax1.fill_between(fc.index, (fc - sdf).values, (fc + sdf).values, color="seagreen", alpha=0.15,
+                                     label=f"+-{sdf.dropna().iloc[0]:g} F (SD of the predicted low)")
+            low_t = fc.idxmin()
+            ax1.scatter([low_t], [fc.min()], marker="*", s=200, color="gold", edgecolor="black", zorder=12)
+            ax1.annotate(f"{fc.min():.0f} F", (low_t, fc.min()), textcoords="offset points", xytext=(8, -14),
+                         color="darkgoldenrod", fontsize=9, fontweight="bold")
 
     # --- HOURLY RAINFALL (twin y-axis): station(s) vs model ---
     # Separate y-axis since rain (inches) and temperature (F) are
@@ -1429,6 +1463,21 @@ def main():
                              color="seagreen", zorder=4, label="Bias after cold-pool adjustment")
                     print(f"  Cold-pool adjusted: mean error {cp_err.mean():+.2f} F, mean abs {cp_err.abs().mean():.2f} F over {cp_err.notna().sum()} night hours "
                           f"(URMA alone on the same hours: {(model_df['model_val'].reindex(cp.index) - st_at).dropna().reindex(cp_err.dropna().index).mean():+.2f} F)")
+
+            if fc_series is not None:                     # the forecast as it was issued, against what the station then did (past hours only)
+                fc_b = fc_series[(fc_series.index >= cutoff) & (fc_series.index <= now_utc)].resample("1h").mean()
+                st_f = combined_df["station_interpolated"].reindex(fc_b.index)
+                fc_err = (fc_b - st_f).dropna()
+                if not fc_err.empty:
+                    ax2.plot(fc_err.reindex(fc_b.index).index, fc_err.reindex(fc_b.index).values, linestyle="--", linewidth=1.6, marker="o", markersize=3,
+                             color="seagreen", zorder=4, label="Bias of the adjusted forecast (as issued)")
+                    print(f"  Adjusted forecast as issued: mean error {fc_err.mean():+.2f} F, mean abs {fc_err.abs().mean():.2f} F over {len(fc_err)} hours")
+                    nights = (fc_err.index.tz_convert(tz) - pd.Timedelta(hours=12)).date            # an evening and the morning after count as one night
+                    for night in sorted(set(nights)):
+                        idx = fc_err.index[nights == night]
+                        if len(idx) >= 6:
+                            pred, act = fc_b.reindex(idx).min(), st_f.reindex(idx).min()
+                            print(f"    night of {night}: predicted low {pred:5.1f} F, station low {act:5.1f} F  ({pred - act:+.1f} F)  [{len(idx)} hours]")
 
             ax2.axhline(0, color="black", linestyle="-", linewidth=0.8, alpha=0.7, zorder=1)
 

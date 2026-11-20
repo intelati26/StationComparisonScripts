@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Everything the Ambient API still holds for the home station (all fields, every 5-minute record, valid ones: a temperature in range), newest first, into log/ambient_all.db (git-ignored). Resumable; a rerun adds what is new.
-   python ambient_all.py"""
+   python analysis/ambient_all.py            the NEWEST records: from now back to what is stored (a minute or two)
+   python analysis/ambient_all.py --older    keep going below the oldest stored record (the long, first pull)"""
 import json, os, sqlite3, sys, time, urllib.parse
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from datetime import datetime, timedelta, timezone
@@ -14,7 +15,8 @@ db = sqlite3.connect(c.LOG / "ambient_all.db")
 db.execute("CREATE TABLE IF NOT EXISTS ambient (utc TEXT PRIMARY KEY, tempf REAL, dewpoint REAL, humidity REAL, windspeedmph REAL, windgustmph REAL, winddir REAL, solarradiation REAL, baromrelin REAL, hourlyrainin REAL, raw TEXT)")
 have_new = db.execute("SELECT max(utc) FROM ambient").fetchone()[0]          # a rerun stops once a page holds only records already stored
 lo0 = db.execute("SELECT min(utc) FROM ambient").fetchone()[0]                # carry on below what is stored (the newest part was pulled first)
-start = datetime.fromisoformat(lo0.replace("Z", "+00:00")) - timedelta(seconds=1) if lo0 else datetime.now(timezone.utc)
+OLDER = "--older" in sys.argv or not lo0
+start = (datetime.fromisoformat(lo0.replace("Z", "+00:00")) - timedelta(seconds=1)) if (OLDER and lo0) else datetime.now(timezone.utc)
 until, bad, pages, empties = start.strftime("%Y-%m-%dT%H:%M:%S.000Z"), 0, 0, 0
 t0 = time.time()
 while True:
@@ -46,6 +48,9 @@ while True:
     db.commit()
     pages += 1
     oldest = min(r["dateutc"] for r in recs)
+    if not OLDER and have_new and datetime.fromtimestamp(oldest / 1000, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") <= have_new:
+        print(f"caught up with what was stored ({pages + 1} pages)", flush=True)
+        break
     until = (datetime.fromtimestamp(oldest / 1000, timezone.utc) - timedelta(seconds=1)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
     if pages % 10 == 0:
         n, lo = db.execute("SELECT count(*), min(utc) FROM ambient").fetchone()
