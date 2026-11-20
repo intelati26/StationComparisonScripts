@@ -17,20 +17,26 @@ cfg = {"lat": float(os.environ["WEATHER_LAT"]), "lon": float(os.environ["WEATHER
 args = sys.argv[1:]; db = None
 if "--db" in args:
     i = args.index("--db"); db = args[i + 1]; del args[i:i + 2]
-# A relative WEATHER_DB_PATH is read by the collectors and the plotter relative to THEIR folder, which differs between layouts (the repo root; a home folder with the collectors in a child folder such as collect/).
-# So every likely place is tried, and when more than one holds a file the LARGEST wins (the collectors' database is by far the biggest; a stray near-empty copy is not it). All candidates are printed.
+# The collectors' database is decided in ONE place: weather_common.py (DB_PATH = WEATHER_DB_PATH, a relative one taken relative to that file's own folder). So find that file and do exactly the same:
+# in a layout with the collectors in a child folder (collect/), the database is beside it. Only when weather_common.py cannot be found are the likely folders tried and the LARGEST matching file used.
 here = os.path.dirname(os.path.abspath(__file__)); rel = db or cfg["db"]
-if os.path.isabs(rel): tried = [rel]
+if os.path.isabs(rel): db = rel
 else:
-    bases = [os.path.dirname(here), os.getcwd(), os.path.dirname(os.getcwd()), here]
-    bases += [os.path.join(b_, d_) for b_ in list(bases) for d_ in ("collect", "collectors", "data")]
-    tried = list(dict.fromkeys(os.path.abspath(os.path.join(p, rel)) for p in bases))
-found = [p for p in tried if os.path.exists(p)]
-if not found: sys.exit("no database found; looked for:\n  " + "\n  ".join(tried) + "\n(set WEATHER_DB_PATH in .env, or give --db with the full path)")
-db = max(found, key=os.path.getsize)
-if len(found) > 1:
-    print("more than one database matches; using the largest:")
-    for p in found: print(f"  {'->' if p == db else '  '} {p}  ({os.path.getsize(p) / 1e6:.1f} MB)")
+    ups = [os.path.dirname(here), os.getcwd(), os.path.dirname(os.getcwd()), here]
+    wc = next((p for p in (os.path.join(u, d_, "weather_common.py") for u in ups for d_ in ("", "collect", "collectors")) if os.path.exists(p)), None)
+    if wc:
+        db = os.path.abspath(os.path.join(os.path.dirname(wc), rel))
+        print(f"the collectors' module: {wc}")
+        if not os.path.exists(db): sys.exit(f"the collectors' database should be at {db} but is not there (WEATHER_DB_PATH in .env, or --db with the full path)")
+    else:
+        bases = ups + [os.path.join(u, d_) for u in ups for d_ in ("collect", "collectors", "data")]
+        tried = list(dict.fromkeys(os.path.abspath(os.path.join(p, rel)) for p in bases)); found = [p for p in tried if os.path.exists(p)]
+        if not found: sys.exit("no database found; looked for:\n  " + "\n  ".join(tried) + "\n(set WEATHER_DB_PATH in .env, or give --db with the full path)")
+        db = max(found, key=os.path.getsize)
+        if len(found) > 1:
+            print("weather_common.py not found and more than one database matches; using the largest:")
+            for p in found: print(f"  {'->' if p == db else '  '} {p}  ({os.path.getsize(p) / 1e6:.1f} MB)")
+if not os.path.exists(db): sys.exit(f"no database at {db} (set WEATHER_DB_PATH in .env, or give --db with the full path)")
 print(f"database: {db}")
 def write(con, d):
     rows = []
