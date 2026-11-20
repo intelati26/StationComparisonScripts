@@ -1,16 +1,24 @@
 #!/usr/bin/env python3
 """A picture of tonight's low: the forecast temperature, the equation's adjusted temperature, the +- band around the predicted low, the wind aloft and the hourly drop. Needs matplotlib (Termux: pkg install matplotlib), nothing else; it runs low.py --json beside it, so the place, amplitude, bias and SD come from the same .env and options.
-  python low_plot.py [OUT.png] [any low.py options]        default ~/low.png (or ./low.png off Termux)"""
+  python low_plot.py [OUT.png] [--from low.json] [any low.py options]     (--from: a file written by low.py --json-file, so no second request)        default ~/low.png (or ./low.png off Termux)"""
 import json, os, subprocess, sys
 from datetime import datetime, timedelta, timezone
 import matplotlib; matplotlib.use("Agg")
 import matplotlib.pyplot as plt, matplotlib.dates as md
 here = os.path.dirname(os.path.abspath(__file__))
-args = sys.argv[1:]; out = args.pop(0) if args and args[0].lower().endswith(".png") else os.path.join(os.path.expanduser("~") if os.path.isdir("/data/data/com.termux") else ".", "low.png")
-r = subprocess.run([sys.executable, os.path.join(here, "low.py"), "--json"] + args, capture_output=True, text=True)
-if r.returncode:
-    sys.exit(r.stderr.strip() or "low.py failed")
-d = json.loads(r.stdout); tz = timezone(timedelta(seconds=d["utc_offset_seconds"]))
+args = sys.argv[1:]
+src = None
+if "--from" in args:                                   # a payload file written by low.py --json-file: no second request
+    i = args.index("--from"); src = os.path.expanduser(args[i + 1]); del args[i:i + 2]
+out = args.pop(0) if args and args[0].lower().endswith(".png") else os.path.join(os.path.expanduser("~") if os.path.isdir("/data/data/com.termux") else ".", "low.png")
+if src:
+    d = json.load(open(src))
+else:
+    r = subprocess.run([sys.executable, os.path.join(here, "low.py"), "--json"] + args, capture_output=True, text=True)
+    if r.returncode:
+        sys.exit(r.stderr.strip() or "low.py failed")
+    d = json.loads(r.stdout)
+d = d; tz = timezone(timedelta(seconds=d["utc_offset_seconds"]))
 H = d["hours"]; t = [datetime.fromisoformat(h["utc"].replace("Z", "+00:00")).astimezone(tz) for h in H]
 fc = [h["forecast"] for h in H]; fin = [h["final"] + d["bias"] for h in H]
 low_t = datetime.fromisoformat(d["low_utc"].replace("Z", "+00:00")).astimezone(tz)

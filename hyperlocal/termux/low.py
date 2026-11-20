@@ -9,7 +9,7 @@ The equation (hyperlocal/EQUATION.md), for each night hour:
   drop = amp x night x exp(-(U925/30 mph)^3) x (1 - 0.8 x cloud) x min(1, (T - Td)/12)      low = min(T - drop)
 with T, Td, cloud and the wind about 450 m above the ground from the HRRR (GFS outside the US). The model's dewpoint runs high (0.6 F in summer, 2.1 F in fall at one station); 1, 3 and 2 F are taken off by season (3 in fall also absorbs the equation's own warm bias with forecast inputs).
 Only coordinates rounded to one decimal (about 10 km) are sent unless --decimals says otherwise."""
-import argparse, json, math, os, subprocess, sys, urllib.parse, urllib.request
+import argparse, json, math, os, subprocess, sys, time, urllib.parse, urllib.request
 from datetime import datetime, timedelta, timezone
 
 def load_env():
@@ -39,6 +39,7 @@ p.add_argument("--nws", action="store_true", help="take the temperature, dewpoin
 p.add_argument("--hourly", action="store_true", help="a table of the night hours: local time, UTC hour, the forecast, the adjustment and the final temperature")
 p.add_argument("--log", nargs="?", const="", default=None, metavar="FILE", help="append this run (the night's hours, the low, the options) as one JSON line to FILE (default: HYPERLOCAL_LOG from .env, else ~/.low_log.jsonl) so the predictions can be scored against the station: score_low_log.py")
 p.add_argument("--json", action="store_true", help="print the night as JSON (the hours, the low with the bias and the SD) for a plot: plot_low.py; no coordinates in it")
+p.add_argument("--json-file", metavar="FILE", help="also write the result (the --json payload) to FILE, for low_plot.py --from FILE: one request serves the table and the picture")
 p.add_argument("--notify", action="store_true", help="for a notification: a title line, then the hourly adjustments")
 a = p.parse_args()
 SAVE = os.path.expanduser("~/.lowtemp")
@@ -64,10 +65,22 @@ LEVELS = (1000, 975, 950, 925, 900, 850, 800, 700)
 TARGET_AGL = 450.0        # the wind used is the wind about 450 m above the ground (300-600 m fit equally well); 925 mb is about that high where the ground is near 300 m
 
 
+LAST_ERR = [""]
+
+
 def get(model):
     q = {"latitude": round(lat, a.decimals), "longitude": round(lon, a.decimals), "models": model, "timezone": "auto", "forecast_days": 3,
          "temperature_unit": "fahrenheit", "wind_speed_unit": "mph", "hourly": "temperature_2m,dew_point_2m,cloud_cover,wind_speed_10m," + ",".join(f"wind_speed_{l}hPa,geopotential_height_{l}hPa" for l in LEVELS), "daily": "sunrise,sunset"}
-    return json.loads(urllib.request.urlopen("https://api.open-meteo.com/v1/forecast?" + urllib.parse.urlencode(q), timeout=30).read())
+    url = "https://api.open-meteo.com/v1/forecast?" + urllib.parse.urlencode(q)
+    for wait in (0, 3, 8):                                  # a busy or rate-limited answer (429, 5xx, a timeout) is retried twice after a pause
+        time.sleep(wait)
+        try:
+            return json.loads(urllib.request.urlopen(url, timeout=30).read())
+        except Exception as e:
+            LAST_ERR[0] = f"{model}: {getattr(e, 'code', '') or type(e).__name__} {getattr(e, 'reason', '') or e}".strip()
+            if getattr(e, "code", 0) not in (0, 429, 500, 502, 503, 504):
+                break
+    raise RuntimeError(LAST_ERR[0])
 
 
 d = None
@@ -80,7 +93,7 @@ for model in ("ncep_hrrr_conus", "gfs_seamless"):
     except Exception:
         d = None
 if d is None:
-    sys.exit("Open-Meteo did not answer")
+    sys.exit("Open-Meteo did not answer" + (f" ({LAST_ERR[0]})" if LAST_ERR[0] else ""))
 h = d["hourly"]
 T = [datetime.fromisoformat(t) for t in h["time"]]
 now = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(seconds=d.get("utc_offset_seconds") or 0)       # the place's clock, as the forecast's times are
@@ -214,6 +227,9 @@ if a.log is not None:
     path = os.path.expanduser(a.log or os.environ.get("HYPERLOCAL_LOG") or "~/.low_log.jsonl")
     with open(path, "a") as lf:
         lf.write(json.dumps({"run_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), **PAYLOAD}) + "\n")
+if a.json_file:
+    with open(os.path.expanduser(a.json_file), "w") as jf:
+        json.dump(PAYLOAD, jf)
 if a.json:
     print(json.dumps(PAYLOAD))
 elif a.notify:
