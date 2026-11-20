@@ -57,3 +57,4 @@ pytest.ini
 .pytest_cache/
 test-results/
 test-reports/
+.gribstream_credits.json
