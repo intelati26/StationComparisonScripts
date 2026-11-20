@@ -35,11 +35,12 @@ pw1 = pvlib.atmosphere.gueymard94_pw(((u["t"] - 32) / 1.8).to_numpy(), u["rh"].t
 def solis(pw): return np.asarray(pvlib.clearsky.simplified_solis(u["el"].clip(lower=0.5).to_numpy(), aod700=0.08, precipitable_water=pw, pressure=pres, dni_extra=dni_extra)["ghi"])
 u["solis0"] = solis(np.full(len(u), float(np.median(pw1[u["clear"].to_numpy()])))); u["solis1"] = solis(pw1)
 EDGES = np.arange(8, 90, 5.0)
+MIN_EL = float(os.environ.get("MIN_EL", "25"))            # the fits of the humidity term use only readings with the sun at least this high
 def fit(train):                                  # everything the models need, from the training days only
     t = train[train.clear]; b = np.digitize(t.el, EDGES) - 1; tab = {i: float(np.median(t.kt[b == i])) for i in set(b) if (b == i).sum() >= 10}
     mid = np.array([EDGES[i] + 2.5 for i in sorted(tab)]); val = np.array([tab[i] for i in sorted(tab)])
     cal = lambda el: np.interp(el, mid, val)
-    hi = t[t.el >= 25]; r = hi.kt / cal(hi.el); td0 = float(hi.td.median()); bco = float(np.polyfit(hi.td - td0, r, 1)[0])      # relative change of the ceiling per F of dewpoint
+    hi = t[t.el >= MIN_EL]; r = hi.kt / cal(hi.el); td0 = float(hi.td.median()); bco = float(np.polyfit(hi.td - td0, r, 1)[0])      # relative change of the ceiling per F of dewpoint
     k0 = float(np.median(hi.sr / hi.solis0)); k1 = float(np.median(hi.sr / hi.solis1))
     return cal, td0, bco, k0, k1
 out = []; folds = []
@@ -56,12 +57,14 @@ print(f"{r.day.nunique()} days, {int(days.clear.sum())} clear; each month scored
 _cal, _td0, _bco, _k0, _k1 = fit(u)
 print(f"THE ADJUSTMENT (fit on all months): clear_sky(reading) = table(sun elevation) x (1 + {_bco:+.5f} x (dewpoint F - {_td0:.1f}))   i.e. {_bco*10*100:+.2f}% per +10 F of dewpoint")
 print(f"  across the {len(folds)} leave-one-month-out fits: coefficient {min(f[2] for f in folds):+.5f} to {max(f[2] for f in folds):+.5f}, reference dewpoint {min(f[1] for f in folds):.1f} to {max(f[1] for f in folds):.1f} F")
-_hi = u[u.clear & (u.el >= 25)].copy(); _hi["rr"] = _hi.kt / _cal(_hi.el)
+_hi = u[u.clear & (u.el >= MIN_EL)].copy(); _hi["rr"] = _hi.kt / _cal(_hi.el)
 print(f"  sample: station record {df['time'].min().date()} to {df['time'].max().date()} ({(df['time'].max() - df['time'].min()).days / 365.25:.1f} years); {u.day.nunique()} days with solar, humidity and dewpoint; {int(days.clear.sum())} clear days; the fit rests on {len(_hi)} clear-day readings (sun 25+ deg) from {_hi.day.nunique()} days, dewpoints {_hi.td.min():.0f} to {_hi.td.max():.0f} F")
 _sea = {12: "winter", 1: "winter", 2: "winter", 3: "spring", 4: "spring", 5: "spring", 6: "summer", 7: "summer", 8: "summer", 9: "autumn", 10: "autumn", 11: "autumn"}
 print("  the same fit INSIDE each season alone (does the effect hold without the season-to-season swing?):")
 for _s in ("winter", "spring", "summer", "autumn"):
     _g = _hi[_hi.time.dt.month.map(_sea) == _s]
+    if len(_g) < 30:
+        print(f"    {_s:<7} too few readings at this sun angle ({len(_g)})"); continue
     print(f"    {_s:<7} {np.polyfit(_g.td - _td0, _g.rr, 1)[0] * 1000:+6.2f} % per +10 F   ({len(_g):>4} readings, {_g.day.nunique():>2} days, dewpoint {_g.td.min():.0f}-{_g.td.max():.0f} F, corr {np.corrcoef(_g.td, _g.rr)[0, 1]:+.2f})")
 _y1 = _hi[_hi.time < pd.Timestamp("2026-01-01", tz="UTC")]; _y2 = _hi[_hi.time >= pd.Timestamp("2026-01-01", tz="UTC")]
 print(f"  by calendar year: 2025 {np.polyfit(_y1.td - _td0, _y1.rr, 1)[0] * 1000:+.2f} % per +10 F ({_y1.day.nunique()} days) | 2026 {np.polyfit(_y2.td - _td0, _y2.rr, 1)[0] * 1000:+.2f} % per +10 F ({_y2.day.nunique()} days)")
@@ -127,14 +130,14 @@ if a.envelope:
     cal_all, td0_all, b_all, _, _ = fit(u)
     u["kt_cal"] = u.kt / cal_all(u.el)                                     # clearness relative to the calibrated line (1 = on it)
     u["env"] = u.sort_values("time").groupby("day")["kt_cal"].transform(lambda x: x.rolling(7, center=True, min_periods=4).quantile(0.9))
-    u["stretch"] = (u.kt_cal >= 0.95 * u.env) & (u.env >= ENV_MIN) & (u.el >= 25)              # on the upper envelope, and the envelope itself is near the clear-sky line
+    u["stretch"] = (u.kt_cal >= 0.95 * u.env) & (u.env >= ENV_MIN) & (u.el >= MIN_EL)              # on the upper envelope, and the envelope itself is near the clear-sky line
     sd = u.groupby("day").agg(env=("env", "median"), n=("el", "size")); sd = sd[sd.n >= 14]
     print("\nHow close does each day's smoothed upper envelope read to the calibrated clear-sky line? (all days, envelope median / line; dewpoint-adjusted line)")
     dmean = u.groupby("day").td.mean(); sd["td"] = dmean; sd["env_adj"] = sd.env / (1 + b_all * (sd.td - td0_all))
     for lab, col in (("no humidity", "env"), ("dewpoint-adjusted", "env_adj")):
         x = sd[col]; print(f"  {lab:<18} median {x.median():.3f}   within 5% of 1: {np.mean(np.abs(x - 1) <= .05):.0%}   within 10%: {np.mean(np.abs(x - 1) <= .10):.0%}   ({len(sd)} days)")
     hi = u[u.stretch].copy(); hi["rr"] = hi.kt_cal
-    print(f"\nthe dewpoint fit from the clear STRETCHES of all days: {len(hi)} readings from {hi.day.nunique()} days (clear days only: {int((u.clear & (u.el >= 25)).sum())} readings from {int(days.clear.sum())} days)")
+    print(f"\nthe dewpoint fit from the clear STRETCHES of all days: {len(hi)} readings from {hi.day.nunique()} days (clear days only: {int((u.clear & (u.el >= MIN_EL)).sum())} readings from {int(days.clear.sum())} days)")
     p = np.polyfit(hi.td - td0_all, hi.rr, 1); print(f"  all seasons: {p[0] * 1000:+.2f} % per +10 F (clear days only: {b_all * 1000:+.2f})")
     for sname in ("winter", "spring", "summer", "autumn"):
         g = hi[hi.time.dt.month.map(seas) == sname]
