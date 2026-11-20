@@ -5,7 +5,7 @@ Overnight low at one station, and why it runs colder (or not) than the grid: a s
 **Start here:** `EQUATION.md` (the equation, each term and what it earned), `RESEARCH.md` (what the literature says and what the data did and did not show).
 
 ## Use it
-- `termux/low.py` tonight's low from Open-Meteo alone (stdlib only; runs in Termux). `python low.py LAT LON [--amp 5|10] [--table]`; `termux/low-temp.sh` is a Termux:Widget shortcut.
+- `termux/low.py` tonight's low from Open-Meteo alone (stdlib only; runs in Termux). `python low.py` uses the place and site amplitude in `.env` (WEATHER_LAT, WEATHER_LON, HYPERLOCAL_AMP); `python low.py LAT LON [--amp 5|10] [--table]` overrides them; `termux/low-temp.sh` is a Termux:Widget shortcut.
 - `maps/tonight_live.html` a page (open it in a browser) with live MAG and SPC 925 mb pictures and the low for a place you enter; nothing about the place is stored in the file.
 - `coldpool.py forecast` the same equation with the station's live Ambient reading and the NWS hourly forecast; `coldpool.py fit [N]` fits it to a StationComparisonScripts database (and to the last N days downloaded); `coldpool.py track [H]`, `backfill`, `gribfill`, `dptfill` fill and compare the history.
 - `spc925.py` keeps SPC's hourly 925 mb analysis crop so the night's pictures can be scrolled through.
