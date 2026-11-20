@@ -1286,7 +1286,7 @@ def main():
     h2, l2 = ax1_rain.get_legend_handles_labels()
     ax1_legend = ax1.legend(
         h1 + h2, l1 + l2,
-        loc="upper center", bbox_to_anchor=(0.5, -0.08),
+        loc="upper center", bbox_to_anchor=(0.5, -0.025),
         ncol=3, frameon=True, facecolor="white", framealpha=0.9, fontsize=8.5,
     )
     ax1_period_rows = compute_period_rows(
@@ -1299,6 +1299,7 @@ def main():
     # --- BOTTOM PANEL: AMBIENT BIAS ---
     daily_lines = []
     box_bottom = 0.0  # safe default if the daily summary box below never gets drawn
+    summary_txt = None
 
     if (not pivoted_stations.empty and "AMBIENT" in pivoted_stations.columns
             and not model_for_bias.empty):
@@ -1628,7 +1629,7 @@ def main():
         box_top = 0.04
         box_bottom = box_top - box_height_frac
 
-        fig.text(
+        summary_txt = fig.text(
             0.5, box_bottom, daily_summary_text,
             horizontalalignment="center", verticalalignment="bottom",
             fontsize=7.5, fontfamily="monospace",
@@ -1639,9 +1640,11 @@ def main():
         # suspenders against exactly the "bottom cannot be >= top" crash
         # this box previously caused on a wide date range, even though
         # MAX_SUMMARY_DAYS above should already keep n_lines bounded.
-        extra_bottom = min(max(box_height_frac + 0.02, 0.08), 0.45)
+        # The summary box, the x-axis legend and the tick labels hang BELOW the bottom axes and are positioned from measurements after the layout
+        # (further down); savefig's tight bounding box includes them, so no empty margin is reserved for them here.
+        extra_bottom = 0.02
     else:
-        extra_bottom = 0.05
+        extra_bottom = 0.02
 
     ax1.set_xlim(cutoff, plot_end)
     ax2.set_xlim(cutoff, plot_end)
@@ -1712,14 +1715,14 @@ def main():
         # height_ratios split rather than a guessed multiplier.
         top_margin = 1.0 - (extra_h_ax1 + 0.35 + 0.12) / new_fig_h
         avg_axes_height_frac = top_margin * (3.5 / 5.3 + 1.8 / 5.3) / 2
-        hspace = 0.35 + ((extra_h_ax2 + 0.15) / new_fig_h) / max(avg_axes_height_frac, 0.01)
+        hspace = 0.03 + ((extra_h_ax2 + 0.15) / new_fig_h) / max(avg_axes_height_frac, 0.01)       # the gap = the measured legend + the header rows (the loop below adds what is missing), not a fixed 0.35
         fig.subplots_adjust(bottom=extra_bottom * fig_h_base / new_fig_h,
                             top=top_margin, hspace=hspace)
         if ax1_legend_h_in <= 0:
             break
         # Where does the legend's bottom edge land, against the top of ax2's header rows?
         p1, p2 = ax1.get_position(), ax2.get_position()
-        legend_bottom = p1.y0 - 0.08 * p1.height - ax1_legend_h_in / new_fig_h
+        legend_bottom = p1.y0 - 0.025 * p1.height - ax1_legend_h_in / new_fig_h
         ax2_top_with_header = p2.y1 + (ax2_header_rows * ROW_HEIGHT_INCHES) / new_fig_h
         deficit_in = (ax2_top_with_header + LEGEND_PAD_INCHES / new_fig_h - legend_bottom) * new_fig_h
         if deficit_in <= 0.02:
@@ -1745,6 +1748,34 @@ def main():
                              ax1_period_rows, row_height_frac)
     draw_extremes_header_fig(fig, ax2.get_position().y1, ax2_period_rows, row_height_frac)
 
+    # Stack what hangs below the bias panel from measured extents: tick labels + axis label, then the legend, then the daily summary box, each a small gap under the last
+    # (a fixed anchor left the legend on top of the axis label and a wide empty band above the box).
+    try:
+        from matplotlib.backends.backend_agg import RendererAgg
+        _r2 = RendererAgg(int(fig_w * fig.dpi), int(new_fig_h * fig.dpi), fig.dpi)
+        _to_fig = fig.transFigure.inverted()
+        _ymin = lambda bb: _to_fig.transform(bb.get_points())[0][1]
+        _p2 = ax2.get_position()
+        _axis_bottom = _ymin(ax2.xaxis.get_tightbbox(_r2))
+        _leg2 = ax2.get_legend()
+        if _leg2 is not None:
+            _leg2.set_bbox_to_anchor((0.5, (_axis_bottom - 0.008 - _p2.y0) / _p2.height), transform=ax2.transAxes)
+            _lowest = _ymin(_leg2.get_window_extent(_r2))
+        else:
+            _lowest = _axis_bottom
+        if summary_txt is not None:
+            summary_txt.set_va("top")
+            summary_txt.set_position((0.5, _lowest - 0.014))
+            _bp = summary_txt.get_bbox_patch()
+            if _bp is not None:
+                summary_txt.update_bbox_position_size(_r2)          # the box's patch is only refreshed on draw: refresh it before reading its edge
+            _lowest = _ymin((_bp if _bp is not None else summary_txt).get_window_extent(_r2))
+        box_bottom = _lowest
+        _stacked = True
+    except Exception as _e:
+        print(f"  (layout of the legend and summary box fell back to fixed positions: {_e})")
+        _stacked = False
+
     # --- OPTIONAL WINDROSE SECTION (--windrose) ---
     # Added as its own axes positioned BELOW the figure's nominal y=0
     # (figure-fraction coordinates, same trick the daily summary box
@@ -1764,14 +1795,14 @@ def main():
             windrose_end = min(now_utc, plot_end)
 
             WINDROSE_HEIGHT_INCHES = 4.4
-            WINDROSE_GAP_INCHES = 0.5
+            WINDROSE_GAP_INCHES = 1.0 if _stacked else 0.5            # the rose's own two-line title sits above its axes, so it needs room under the summary box
             # Clearance below y=0 for ax2's own legend, which is anchored
             # at bbox_to_anchor=(0.5, -0.18) in AXES-fraction (not figure-
             # fraction) coordinates and so isn't captured by box_bottom
             # (that only accounts for the daily summary box, when drawn).
-            LEGEND_CLEARANCE_FRAC = 0.06
+            LEGEND_CLEARANCE_FRAC = 0.0 if _stacked else 0.06
 
-            windrose_top_frac = (min(box_bottom, 0.0) - LEGEND_CLEARANCE_FRAC
+            windrose_top_frac = ((box_bottom if _stacked else min(box_bottom, 0.0)) - LEGEND_CLEARANCE_FRAC
                                   - WINDROSE_GAP_INCHES / new_fig_h)
             windrose_height_frac = WINDROSE_HEIGHT_INCHES / new_fig_h
             windrose_bottom_frac = windrose_top_frac - windrose_height_frac
