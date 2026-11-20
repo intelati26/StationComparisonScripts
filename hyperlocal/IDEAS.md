@@ -34,7 +34,7 @@ Typical amplitude 5 F, the station's own amplitude lowers the mean MAE of 36 sta
 - **The offset - open.** Stations also differ by a fixed offset of mostly +-1.8 F (up to -6 F for one); is it siting, instrument or both?
 
 ## 5. Outputs and tools
-- **A range and a bias correction in the notification - done 2026-11-20.** `termux/low.py` shows the predicted low minus 1 F, +- 2.8 F (measured on 287 nights of real NBS forecasts; see `EQUATION.md`). Still open: a spread that depends on the month (SD 2.4 in summer, about 3 in winter, from few nights) and on the wind aloft.
+- **A range and a bias correction in the notification - done 2026-11-20.** `termux/low.py` shows the predicted low +- 2.8 F (the SD held on both streams measured); the bias is a setting, default 0, because it differs between the NBM bulletin (+1.0 F warm) and Open-Meteo's HRRR history (1.9 F cold); `--log` keeps each night's run so the real bias of the live stream can be scored. See `EQUATION.md`. Still open: a spread that depends on the month (SD 2.4 in summer, about 3 in winter, from few nights) and on the wind aloft.
 - **Frost probability - open.** The chance the low is at or below 32 F (or another threshold) from the same error distribution.
 - **A per-hour dewpoint fall in `low.py` - open.** See section 2.
 - **Scoring in the wild - partial.** `coldpool.py forecast` logs each run's prediction and the NWS hourly values (`log/forecasts.csv`, `log/nws_forecasts.csv`); score them against the station's actual low after a few weeks.
