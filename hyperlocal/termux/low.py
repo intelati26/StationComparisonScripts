@@ -13,9 +13,9 @@ import argparse, json, math, os, subprocess, sys, time, urllib.parse, urllib.req
 from datetime import datetime, timedelta, timezone
 
 def load_env():
-    """The same .env as the rest of hyperlocal (WEATHER_LAT, WEATHER_LON, HYPERLOCAL_AMP, HYPERLOCAL_TD_ADJUST): looked for beside this file, in its parent folder, in the current folder and in the home folder."""
+    """The same .env as the rest of hyperlocal (WEATHER_LAT, WEATHER_LON, HYPERLOCAL_AMP, HYPERLOCAL_TD_ADJUST): looked for beside this file, in its parent folder, in the current folder, in ~/storage/dcim/weather (a folder you can edit from the phone's file manager) and in the home folder."""
     here = os.path.dirname(os.path.abspath(__file__))
-    for folder in (here, os.path.dirname(here), os.getcwd(), os.path.expanduser("~")):
+    for folder in (here, os.path.dirname(here), os.getcwd(), os.path.expanduser("~/storage/dcim/weather"), os.path.expanduser("~")):
         path = os.path.join(folder, ".env")
         if os.path.exists(path):
             for line in open(path).read().splitlines():
