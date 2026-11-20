@@ -31,6 +31,8 @@ p.add_argument("lat", nargs="?", type=float)
 p.add_argument("lon", nargs="?", type=float)
 p.add_argument("--amp", type=float, default=float(os.environ.get("HYPERLOCAL_AMP") or 5.0), help="site amplitude in F: 5 typical, 10 for a cold-prone hollow (default: HYPERLOCAL_AMP from .env, else 5)")
 p.add_argument("--td-adjust", type=float, default=float(os.environ["HYPERLOCAL_TD_ADJUST"]) if os.environ.get("HYPERLOCAL_TD_ADJUST") else None, help="F taken off the forecast dewpoint (default: 1 in Jun-Aug, 3 in Sep-Nov, 2 otherwise)")
+p.add_argument("--bias", type=float, default=float(os.environ.get("HYPERLOCAL_BIAS") or -1.0), help="F added to the predicted low (default -1.0: on 287 nights of real forecasts the equation's low ran 1.0 F warm; HYPERLOCAL_BIAS in .env)")
+p.add_argument("--sd", type=float, default=float(os.environ.get("HYPERLOCAL_SD") or 2.8), help="the standard deviation of the predicted low in F, shown as +- (default 2.8, measured on those nights; 0 hides it; HYPERLOCAL_SD in .env)")
 p.add_argument("--decimals", type=int, default=1, help="decimals of the coordinates sent (1 is about 10 km)")
 p.add_argument("--table", action="store_true", help="print every night hour")
 p.add_argument("--nws", action="store_true", help="take the temperature, dewpoint and cloud from the NWS hourly forecast (US only) instead of the HRRR; the wind aloft is still the HRRR's")
@@ -200,12 +202,14 @@ def table_text(sep="|", pad=False):
     return "\n".join(sep.join(r) for r in [head] + body)
 
 
+LOW = pl[6] + a.bias                                  # the bias-corrected low; the hourly table below stays as the equation gives it
+SD = f" +-{a.sd:g}" if a.sd else ""
 if a.notify:
-    print(f"low {pl[6]:.0f}F at {hour_label(pl[0])} (forecast {fl[1]:.0f}F, rule {rule:.0f}F)")
+    print(f"low {LOW:.0f}F{SD} at {hour_label(pl[0])} (forecast {fl[1]:.0f}F, rule {rule:.0f}F)")
     print(table_text())
     print(f"cloud {cloud:.0f}%, wind aloft up to {umax:.0f} mph")
 else:
     if a.hourly:
         print(table_text(pad=True))
-    print(f"forecast low {fl[1]:.0f}F at {fl[0]:%a %H}:00 | equation (site amplitude {a.amp:g}) {pl[6]:.0f}F at {pl[0]:%a %H}:00 | mental rule {rule:.0f}F ({why})")
+    print(f"forecast low {fl[1]:.0f}F at {fl[0]:%a %H}:00 | equation (site amplitude {a.amp:g}) {LOW:.0f}F{SD} at {pl[0]:%a %H}:00 (the equation gives {pl[6]:.0f}F, bias {a.bias:+g}F applied) | mental rule {rule:.0f}F ({why})")
     print(f"night: cloud {cloud:.0f}%, wind aloft (450 m) up to {umax:.0f} mph, dewpoint {td_eve:.0f}F after taking {adj:g} off. ({d.get('generationtime_ms', 0):.0f} ms)")
