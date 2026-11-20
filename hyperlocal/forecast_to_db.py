@@ -17,14 +17,20 @@ cfg = {"lat": float(os.environ["WEATHER_LAT"]), "lon": float(os.environ["WEATHER
 args = sys.argv[1:]; db = None
 if "--db" in args:
     i = args.index("--db"); db = args[i + 1]; del args[i:i + 2]
-# A relative WEATHER_DB_PATH: the collectors and plotter read it relative to their own folder, whose place differs between layouts (the repo root, or a home folder with the collectors in a child folder),
-# so the places it could be are tried in order: the folder above this one, the folder you run it from, and the folder above that: the first that holds the file is used.
+# A relative WEATHER_DB_PATH is read by the collectors and the plotter relative to THEIR folder, which differs between layouts (the repo root; a home folder with the collectors in a child folder such as collect/).
+# So every likely place is tried, and when more than one holds a file the LARGEST wins (the collectors' database is by far the biggest; a stray near-empty copy is not it). All candidates are printed.
 here = os.path.dirname(os.path.abspath(__file__)); rel = db or cfg["db"]
 if os.path.isabs(rel): tried = [rel]
-else: tried = [os.path.abspath(os.path.join(p, rel)) for p in (os.path.dirname(here), os.getcwd(), os.path.dirname(os.getcwd()), here)]
-tried = list(dict.fromkeys(tried))
-db = next((p for p in tried if os.path.exists(p)), None)
-if db is None: sys.exit("no database found; looked for:\n  " + "\n  ".join(tried) + "\n(set WEATHER_DB_PATH in .env, or give --db with the full path)")
+else:
+    bases = [os.path.dirname(here), os.getcwd(), os.path.dirname(os.getcwd()), here]
+    bases += [os.path.join(b_, d_) for b_ in list(bases) for d_ in ("collect", "collectors", "data")]
+    tried = list(dict.fromkeys(os.path.abspath(os.path.join(p, rel)) for p in bases))
+found = [p for p in tried if os.path.exists(p)]
+if not found: sys.exit("no database found; looked for:\n  " + "\n  ".join(tried) + "\n(set WEATHER_DB_PATH in .env, or give --db with the full path)")
+db = max(found, key=os.path.getsize)
+if len(found) > 1:
+    print("more than one database matches; using the largest:")
+    for p in found: print(f"  {'->' if p == db else '  '} {p}  ({os.path.getsize(p) / 1e6:.1f} MB)")
 print(f"database: {db}")
 def write(con, d):
     rows = []
