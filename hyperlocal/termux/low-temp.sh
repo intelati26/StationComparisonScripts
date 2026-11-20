@@ -10,7 +10,14 @@ if [ -s "$json" ] && [ -f ~/low_plot.py ] && python -c "import matplotlib" 2>/de
   img=$(python ~/low_plot.py --from "$json" 2>/dev/null | tail -1)
 fi
 act=()
-if [ -n "$img" ]; then            # tapping the notification (or its Picture button) opens the full-size image in the phone's image viewer
-  act=(--image-path "$img" --action "termux-open '$img'" --button1 "Picture" --button1-action "termux-open '$img'")
+if [ -n "$img" ]; then
+  # the viewer app cannot read Termux's private folder ("does not have permission to open"): open a copy in shared storage (run termux-setup-storage once to create ~/storage)
+  show="$img"
+  if [ -d ~/storage/shared ]; then
+    mkdir -p ~/storage/shared/Pictures && cp "$img" ~/storage/shared/Pictures/low.png && show=~/storage/shared/Pictures/low.png
+  else
+    echo "run termux-setup-storage once (and allow it) so tapping the notification can open the picture"
+  fi
+  act=(--image-path "$img" --action "termux-open '$show'" --button1 "Picture" --button1-action "termux-open '$show'")
 fi
 termux-notification --id tonight --title "Tonight: $(echo "$out" | head -1)" --content "$(echo "$out" | tail -n +2)" "${act[@]}" 2>/dev/null
