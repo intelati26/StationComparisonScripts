@@ -873,6 +873,17 @@ def main():
         "WHERE valid_time >= ? ORDER BY valid_time",
         conn, params=[cutoff_iso], parse_dates=["valid_time"])
 
+    # Cold-pool rows (written by hyperlocal/forecast_to_db.py and adjusted_to_db.py): say what was found, so an empty plot is explained.
+    cp_kinds = (("coldpool", "URMA-adjusted"), ("coldpool_fc", "adjusted forecast"), ("coldpool_bf", "backfill"))
+    cp_win = {m_: int((df_model["model"] == m_).sum()) for m_, _ in cp_kinds}
+    cp_db = {r_[0]: r_[1:] for r_ in conn.execute("SELECT model, COUNT(*), MIN(valid_time), MAX(valid_time) FROM model_analysis WHERE model LIKE 'coldpool%' GROUP BY model").fetchall()}
+    print("\n  Cold-pool rows from the window start on: " + ", ".join(f"{lab_} {cp_win[m_]}" for m_, lab_ in cp_kinds) + f"   (database: {DB_PATH})")
+    for m_, lab_ in cp_kinds:
+        if m_ in cp_db and not cp_win[m_]:
+            print(f"  NOTE: {cp_db[m_][0]} {lab_} rows ({m_}) are in the database ({str(cp_db[m_][1])[:16]} to {str(cp_db[m_][2])[:16]} UTC) but none at or after the start of this plot window")
+    if not cp_db:
+        print("  NOTE: no cold-pool rows in this database: run hyperlocal/forecast_to_db.py (--backfill N) against it")
+
     urma_frontier = get_analysis_frontier(conn, args.lat, args.lon, "urma", now_utc if historical else None)
     rtma_frontier = get_analysis_frontier(conn, args.lat, args.lon, "rtma", now_utc if historical else None)
 
