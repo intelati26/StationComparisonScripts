@@ -53,6 +53,15 @@ print(f"{r.day.nunique()} days, {int(days.clear.sum())} clear; each month scored
 _cal, _td0, _bco, _k0, _k1 = fit(u)
 print(f"THE ADJUSTMENT (fit on all months): clear_sky(reading) = table(sun elevation) x (1 + {_bco:+.5f} x (dewpoint F - {_td0:.1f}))   i.e. {_bco*10*100:+.2f}% per +10 F of dewpoint")
 print(f"  across the {len(folds)} leave-one-month-out fits: coefficient {min(f[2] for f in folds):+.5f} to {max(f[2] for f in folds):+.5f}, reference dewpoint {min(f[1] for f in folds):.1f} to {max(f[1] for f in folds):.1f} F")
+_hi = u[u.clear & (u.el >= 25)].copy(); _hi["rr"] = _hi.kt / _cal(_hi.el)
+print(f"  sample: station record {df['time'].min().date()} to {df['time'].max().date()} ({(df['time'].max() - df['time'].min()).days / 365.25:.1f} years); {u.day.nunique()} days with solar, humidity and dewpoint; {int(days.clear.sum())} clear days; the fit rests on {len(_hi)} clear-day readings (sun 25+ deg) from {_hi.day.nunique()} days, dewpoints {_hi.td.min():.0f} to {_hi.td.max():.0f} F")
+_sea = {12: "winter", 1: "winter", 2: "winter", 3: "spring", 4: "spring", 5: "spring", 6: "summer", 7: "summer", 8: "summer", 9: "autumn", 10: "autumn", 11: "autumn"}
+print("  the same fit INSIDE each season alone (does the effect hold without the season-to-season swing?):")
+for _s in ("winter", "spring", "summer", "autumn"):
+    _g = _hi[_hi.time.dt.month.map(_sea) == _s]
+    print(f"    {_s:<7} {np.polyfit(_g.td - _td0, _g.rr, 1)[0] * 1000:+6.2f} % per +10 F   ({len(_g):>4} readings, {_g.day.nunique():>2} days, dewpoint {_g.td.min():.0f}-{_g.td.max():.0f} F, corr {np.corrcoef(_g.td, _g.rr)[0, 1]:+.2f})")
+_y1 = _hi[_hi.time < pd.Timestamp("2026-01-01", tz="UTC")]; _y2 = _hi[_hi.time >= pd.Timestamp("2026-01-01", tz="UTC")]
+print(f"  by calendar year: 2025 {np.polyfit(_y1.td - _td0, _y1.rr, 1)[0] * 1000:+.2f} % per +10 F ({_y1.day.nunique()} days) | 2026 {np.polyfit(_y2.td - _td0, _y2.rr, 1)[0] * 1000:+.2f} % per +10 F ({_y2.day.nunique()} days)")
 print("  e.g. the ceiling is x" + ", x".join(f"{1 + _bco * (td - _td0):.3f} at a {td} F dewpoint" for td in (10, 30, 50, 70)) + "\n")
 print("CLEAR days, readings with the sun 15+ degrees up: measured / clear-sky model (1.00 = on the line)")
 print(f"{'model':<44}{'median':>7}{'10%':>7}{'90%':>7}{'mean abs err':>14}{'abs err W/m2':>14}")
