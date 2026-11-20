@@ -219,6 +219,7 @@ MODEL_TIER = {
 
 # Safety valve: max pages to prevent infinite loops
 AMBIENT_MAX_PAGES = 10000
+AMBIENT_MAX_GAP_DAYS = 30   # empty days in a row (an outage in the station's record) that are skipped before the history is taken to end
 
 # Reverse backfill: stop after this many consecutive failures (likely past
 # archive boundary)
@@ -1390,6 +1391,7 @@ def fetch_ambient_ambient(conn, start_time, end_time, force=False,
 
     url = f"https://rt.ambientweather.net/v1/devices/{AMBIENT_MAC}"
     end_date_str = None
+    gap_days = 0
     page_num = 0
     total_new = 0
     total_overwritten = 0
@@ -1452,8 +1454,31 @@ def fetch_ambient_ambient(conn, start_time, end_time, force=False,
         page_num += 1
         records = resp.json()
         if not records or not isinstance(records, list):
-            print(f"  [Page {page_num}] No records returned. Done.")
-            break
+            # After a few quick pages the API sometimes answers an empty page; the same request a moment later is answered normally.
+            for wait in (3, 6, 12):
+                time.sleep(wait)
+                try:
+                    r2 = SESSION.get(url, params=params, timeout=15)
+                    records = r2.json() if r2.status_code == 200 else None
+                except Exception:
+                    records = None
+                if records and isinstance(records, list):
+                    break
+        if not records or not isinstance(records, list):
+            # Still empty: a gap in the station's own record (a power or network outage), or the end of its history. Step a day back
+            # and look again, so one outage does not end a deep backfill; a month of nothing in a row is taken as the end.
+            if end_date_str is None or gap_days >= AMBIENT_MAX_GAP_DAYS:
+                print(f"  [Page {page_num}] No records returned. Done.")
+                break
+            gap_days += 1
+            end_dt = pd.to_datetime(end_date_str) - timedelta(days=1)
+            if end_dt < start_time:
+                print(f"  [Page {page_num}] No records returned before the start of the range. Done.")
+                break
+            end_date_str = end_dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+            print(f"  [Page {page_num}] Empty page: a gap in the record, looking from {end_date_str}")
+            continue
+        gap_days = 0
 
         new_in_batch = 0
         overwritten_in_batch = 0

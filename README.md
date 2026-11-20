@@ -68,7 +68,14 @@ Inside each tier the point value is tried from a web API before the GRIB downloa
 - `urma`, `rtma` — [GribStream](https://gribstream.com) (`GRIBSTREAM_TOKEN`; 4 credits per hour, free plan 1200 a day). Same values as the GRIB files.
 - `hrrr_fNN`, `rrfs_fNN` — [Open-Meteo](https://open-meteo.com) (no key); its newest run for that hour. Set `WEATHER_ELEVATION_FT` so it does not adjust temperature to its own terrain height.
 - The APIs give no 3x3 stencil spread (`temp_sd`) or precipitation; those stay empty on API rows.
-- `WEATHER_API_DOWNLOADS=off` disables it, or `gribstream` / `openmeteo` picks one. Both services receive the station's latitude and longitude.
+- `WEATHER_API_DOWNLOADS=off` disables it, or `gribstream` / `openmeteo` / `gribfast` picks some. The web services receive the station's latitude and longitude.
+- `urma`, `rtma` also have `gribfast`: the AWS file read by byte range (the index, then the four messages, about 6 MB each) with GDAL's `gdallocationinfo`, no key and no eccodes, tried when GribStream has nothing or its credits are out. It needs GDAL's command line tools; without them it is skipped. `api_download.grib_points()` reads several stations from one download (46 stations took the same time as one).
+- `GRIBSTREAM_DAILY_CREDITS` (default 1200) is counted in `.gribstream_credits.json`, so separate runs add up; the free plan covers 300 URMA hours a day, and a long backfill is mostly read from the AWS files.
+- Open-Meteo is built from model forecasts stitched together ("its newest run for that hour"), good for winds aloft but not the same thing as the HRRR analysis (f00), and its own notes say it is not meant for long series.
+
+### Collection notes
+- Ambient: the API answers an empty page for an `endDate` inside an outage in the station's record (a power or network outage). `fetch_ambient_ambient` retries the page, then steps a day back and continues (`AMBIENT_MAX_GAP_DAYS`, 30 empty days in a row end the history), so one outage no longer ends a deep backfill.
+- Wunderground: HTTP 401 "API key is throttled" is the daily call limit. `collect_wunderground.py` stops cleanly (exit code 3) with what it saved kept; run it again after the reset. A 204 (the station sent nothing that day) is not an error; 429/5xx are retried.
 
 ### Advanced Usage
 ```bash

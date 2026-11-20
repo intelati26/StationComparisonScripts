@@ -79,18 +79,33 @@ def parse_timestamp(value):
         return None
 
 
+class DailyLimitReached(Exception):
+    """The key's daily call limit is used up (HTTP 401 "API key is throttled"). What was saved stays saved; run again after the reset."""
+
+
 def request_json(session, endpoint, params):
-    response = session.get(
-        endpoint,
-        params=params,
-        timeout=60,
-    )
+    for attempt in range(4):
+        response = session.get(
+            endpoint,
+            params=params,
+            timeout=60,
+        )
 
-    print(f"HTTP: {response.status_code}")
+        print(f"HTTP: {response.status_code}")
 
-    response.raise_for_status()
+        if response.status_code == 204:
+            return {}                                  # no data for that station and day (it was offline): not an error
 
-    return response.json()
+        if response.status_code == 401 and "throttl" in response.text.lower():
+            raise DailyLimitReached(response.text[:200])
+
+        if response.status_code in (429, 500, 502, 503) and attempt < 3:
+            time.sleep(5 * (attempt + 1))              # a busy server or a burst limit: wait and ask again
+            continue
+
+        response.raise_for_status()
+
+        return response.json()
 
 
 def load_existing_timestamps(conn, station):
@@ -553,30 +568,36 @@ def main():
 
         session = requests.Session()
 
-        if range_start is None:
-            collect_last_72_hours(
-                session,
-                conn,
-                db_station,
-                station,
-                api_key,
-                existing,
-                args.force,
-                args.pause,
-            )
-        else:
-            collect_explicit_range(
-                session,
-                conn,
-                db_station,
-                station,
-                api_key,
-                range_start,
-                range_end,
-                existing,
-                args.force,
-                args.pause,
-            )
+        try:
+            if range_start is None:
+                collect_last_72_hours(
+                    session,
+                    conn,
+                    db_station,
+                    station,
+                    api_key,
+                    existing,
+                    args.force,
+                    args.pause,
+                )
+            else:
+                collect_explicit_range(
+                    session,
+                    conn,
+                    db_station,
+                    station,
+                    api_key,
+                    range_start,
+                    range_end,
+                    existing,
+                    args.force,
+                    args.pause,
+                )
+        except DailyLimitReached as e:
+            print()
+            print(f"Wunderground daily limit reached ({e}).")
+            print("Everything fetched so far is saved; run the same command again after the reset (existing rows are skipped).")
+            raise SystemExit(3)
 
         # ---------------------------------------------------------
         # Final database check
