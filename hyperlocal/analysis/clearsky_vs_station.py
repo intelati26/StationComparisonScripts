@@ -11,6 +11,7 @@ import coldpool as c
 import pvlib
 
 ap = argparse.ArgumentParser(); ap.add_argument("--db"); ap.add_argument("--station", default="G6964"); ap.add_argument("--csv"); ap.add_argument("--png"); ap.add_argument("--month", help="YYYY-MM for a small-multiples sheet of that month")
+ap.add_argument("--envelope", action="store_true", help="also use the clear STRETCHES of partly cloudy days (the smoothed upper envelope) and compare the fits")
 ap.add_argument("--sheet", help="PNG: a sheet of NON-clear days (measured against the calibrated curve with and without the dewpoint adjustment), spread over the dewpoint range")
 ap.add_argument("--days", help="with --sheet: comma-separated dates (YYYY-MM-DD) instead of the automatic pick")
 a = ap.parse_args(); c.load_env(); cfg = c.load_config()
@@ -120,3 +121,21 @@ if a.sheet:
     for lo, hi in ((-20, 30), (30, 45), (45, 60), (60, 80)):
         g = nc[(nc.td >= lo) & (nc.td < hi)]
         if len(g): print(f"  dewpoint {lo:>3}-{hi:<3} F: {len(g):>3} days, mean change {(g.cloudy_C - g.cloudy_B).mean() * 100:+.1f} points")
+
+if a.envelope:
+    ENV_MIN = float(os.environ.get("ENV_MIN", "0.85"))
+    cal_all, td0_all, b_all, _, _ = fit(u)
+    u["kt_cal"] = u.kt / cal_all(u.el)                                     # clearness relative to the calibrated line (1 = on it)
+    u["env"] = u.sort_values("time").groupby("day")["kt_cal"].transform(lambda x: x.rolling(7, center=True, min_periods=4).quantile(0.9))
+    u["stretch"] = (u.kt_cal >= 0.95 * u.env) & (u.env >= ENV_MIN) & (u.el >= 25)              # on the upper envelope, and the envelope itself is near the clear-sky line
+    sd = u.groupby("day").agg(env=("env", "median"), n=("el", "size")); sd = sd[sd.n >= 14]
+    print("\nHow close does each day's smoothed upper envelope read to the calibrated clear-sky line? (all days, envelope median / line; dewpoint-adjusted line)")
+    dmean = u.groupby("day").td.mean(); sd["td"] = dmean; sd["env_adj"] = sd.env / (1 + b_all * (sd.td - td0_all))
+    for lab, col in (("no humidity", "env"), ("dewpoint-adjusted", "env_adj")):
+        x = sd[col]; print(f"  {lab:<18} median {x.median():.3f}   within 5% of 1: {np.mean(np.abs(x - 1) <= .05):.0%}   within 10%: {np.mean(np.abs(x - 1) <= .10):.0%}   ({len(sd)} days)")
+    hi = u[u.stretch].copy(); hi["rr"] = hi.kt_cal
+    print(f"\nthe dewpoint fit from the clear STRETCHES of all days: {len(hi)} readings from {hi.day.nunique()} days (clear days only: {int((u.clear & (u.el >= 25)).sum())} readings from {int(days.clear.sum())} days)")
+    p = np.polyfit(hi.td - td0_all, hi.rr, 1); print(f"  all seasons: {p[0] * 1000:+.2f} % per +10 F (clear days only: {b_all * 1000:+.2f})")
+    for sname in ("winter", "spring", "summer", "autumn"):
+        g = hi[hi.time.dt.month.map(seas) == sname]
+        if len(g) > 30: print(f"  {sname:<7} {np.polyfit(g.td - td0_all, g.rr, 1)[0] * 1000:+6.2f} % per +10 F   ({len(g):>4} readings, {g.day.nunique():>3} days, dewpoint {g.td.min():.0f}-{g.td.max():.0f} F, corr {np.corrcoef(g.td, g.rr)[0, 1]:+.2f})")
