@@ -15,7 +15,14 @@ data: "measured solar runs consistently high or low relative to
 Haurwitz at a given sun angle." This script measures that directly
 from the station's own history instead of guessing at it.
 
-METHOD:
+METHOD (--method clear-days, the default; --method percentile is the original):
+    clear-days: readings are thinned to every 15 minutes, days are classified clear when they are bright and SMOOTH (a day's mean |second
+    difference| over its peak is small; cloud makes the curve jagged), and each elevation bin takes the MEDIAN clearness index of the clear days
+    only. The original 97th percentile over ALL readings picks the brightest instants (cloud-edge enhancement, the clearest air of the whole
+    history) and so sat about 14% above an ordinary clear day: on a clear day the measured curve then never reached the clear-sky line and the
+    cloudiness panel showed a grey "cloudier" band under a clear sky.
+
+    percentile (original):
     1. For every solar_radiation reading, compute solar elevation and
        the raw (uncorrected) Haurwitz estimate for that moment.
     2. clearness index kt = measured / haurwitz_raw.
@@ -103,7 +110,8 @@ def print_existing_calibration(cursor, station):
 # ---------------------------------------------------------------------------
 
 def fit_calibration(conn, station, lat, lon, bin_size, percentile,
-                     min_samples, min_elevation, start_dt, end_dt):
+                     min_samples, min_elevation, start_dt, end_dt,
+                     method="percentile", clear_kmax=0.6, clear_kmean=0.5, clear_rough=0.04):
     cursor = conn.cursor()
 
     query = (
@@ -128,6 +136,8 @@ def fit_calibration(conn, station, lat, lon, bin_size, percentile,
         return None
 
     df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+    if method == "clear-days":
+        df = df[df["timestamp"].dt.minute % 15 == 0].reset_index(drop=True)      # 15-minute steps: plenty for a ceiling, and the roughness test is defined on them
     print(f"Loaded {len(df)} solar_radiation readings for {station}, "
           f"{df['timestamp'].min()} -> {df['timestamp'].max()}")
 
@@ -172,6 +182,23 @@ def fit_calibration(conn, station, lat, lon, bin_size, percentile,
     bin_edges = np.arange(min_elevation, 90.0 + bin_size, bin_size)
     usable["bin_idx"] = np.digitize(usable["elevation"], bin_edges) - 1
 
+    if method == "clear-days":
+        # the solar day (local apparent time: the station's longitude shifts the UTC date) so a day is not cut at UTC midnight
+        usable["day"] = (usable["timestamp"] + pd.to_timedelta(lon / 15.0, unit="h")).dt.floor("D")
+
+        def _rough(g):
+            v = g.sort_values("timestamp")["solar_radiation"].to_numpy()
+            return np.nan if len(v) < 10 else float(np.mean(np.abs(np.diff(v, 2))) / max(v.max(), 1.0))
+        days = usable.groupby("day").agg(n=("kt", "size"), kmax=("kt", "max"), kmean=("kt", "mean"))
+        days["rough"] = usable.groupby("day").apply(_rough, include_groups=False)
+        ok = days[(days["n"] >= 14) & (days["kmax"] >= clear_kmax) & (days["kmean"] >= clear_kmean) & (days["rough"] < clear_rough)].index
+        print(f"  {len(ok)} of {len(days)} days classified clear (bright and smooth); fitting the median clearness of those days per elevation bin.")
+        if len(ok) < 5:
+            print("Too few clear days to fit a ceiling. Loosen --clear-kmax / --clear-rough or use --method percentile.")
+            return None
+        usable = usable[usable["day"].isin(ok)]
+        min_samples = min(min_samples, 10)
+
     results = []
     n_sparse = 0
     for bin_idx in range(len(bin_edges) - 1):
@@ -183,7 +210,7 @@ def fit_calibration(conn, station, lat, lon, bin_size, percentile,
                       f"{len(bin_vals)} samples (< {min_samples}) -- skipped.")
                 n_sparse += 1
             continue
-        factor = float(np.percentile(bin_vals, percentile))
+        factor = float(np.median(bin_vals)) if method == "clear-days" else float(np.percentile(bin_vals, percentile))
         results.append((lo, hi, factor, len(bin_vals)))
 
     if not results:
@@ -266,6 +293,15 @@ def main():
     parser.add_argument("--end", type=str, default=None,
                         help="Only use readings on/before this date "
                              "(default: full history)")
+    parser.add_argument("--method", choices=("clear-days", "percentile"), default="clear-days",
+                        help="clear-days (default): the median clearness of clear, smooth days per elevation bin; "
+                             "percentile: the original high percentile of all readings")
+    parser.add_argument("--clear-kmax", type=float, default=0.6,
+                        help="clear-days: a clear day's best clearness index is at least this (default 0.6)")
+    parser.add_argument("--clear-kmean", type=float, default=0.5,
+                        help="clear-days: a clear day's mean clearness index is at least this (default 0.5)")
+    parser.add_argument("--clear-rough", type=float, default=0.04,
+                        help="clear-days: a clear day's roughness (mean |second difference| / peak, at 15-minute steps) is below this (default 0.04)")
     parser.add_argument("--refresh", action="store_true",
                         help="Recompute and overwrite any existing "
                              "calibration for this station. Without "
@@ -305,11 +341,12 @@ def main():
         results = fit_calibration(
             conn, args.station, lat, lon, args.bin_size, args.percentile,
             args.min_samples, args.min_elevation, start_dt, end_dt,
+            method=args.method, clear_kmax=args.clear_kmax, clear_kmean=args.clear_kmean, clear_rough=args.clear_rough,
         )
         if results is None:
             sys.exit(1)
 
-        write_calibration(conn, args.station, results, args.percentile)
+        write_calibration(conn, args.station, results, 50.0 if args.method == "clear-days" else args.percentile)
 
     finally:
         conn.close()
