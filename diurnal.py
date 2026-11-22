@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-diurnal.py — Categorizes AMBIENT bias deviations into Day vs Night 
+diurnal.py — Categorizes Ambient-station bias deviations into Day vs Night 
 using astral's solar elevation angle, organizing strip points left-to-right 
 by their progression through the solar cycle (sunset-to-sunrise / sunrise-to-
 sunset).
 """
 
+from station_ids import AMBIENT_ID
 import os
 import argparse
 import sqlite3
@@ -109,8 +110,8 @@ def main():
     conn = sqlite3.connect(DB_PATH)
 
     df_station = pd.read_sql(
-        "SELECT timestamp, temperature FROM station_obs WHERE station = 'AMBIENT'",
-        conn, parse_dates=["timestamp"],
+        "SELECT timestamp, temperature FROM station_obs WHERE station = ?",
+        conn, params=(AMBIENT_ID,), parse_dates=["timestamp"],
     )
 
     df_model = pd.read_sql(
@@ -273,7 +274,7 @@ def main():
     ax.axhline(0, color='gray', linestyle='--', linewidth=1)
     ax.axvline(2.5, color='dimgray', linestyle=':', linewidth=1.2, alpha=0.7)
 
-    ax.set_title(f"AMBIENT Diurnal Bias — Time-Ordered by Solar Cycle (Left=Start, Right=End) + SEM", fontsize=12, fontweight='bold')
+    ax.set_title(f"{AMBIENT_ID} Diurnal Bias — Time-Ordered by Solar Cycle (Left=Start, Right=End) + SEM", fontsize=12, fontweight='bold')
     ax.set_ylabel("Bias Error (°F) [Model - Station]", fontsize=10)
     ax.grid(True, linestyle=":", alpha=0.5)
 

@@ -22,6 +22,14 @@ Set of scripts to compare a personal weather station to observations/other stati
 ### Shared Library
 - `weather_common.py` — Common utilities for database operations, data fetching, and parsing
 
+## Settings
+
+Put these in a local `.env` file (never committed) or the environment:
+
+- `AMBIENT_API_KEY`, `AMBIENT_APP_KEY`, `AMBIENT_STATION_MAC` - the Ambient Weather API credentials and the station's MAC
+- `AMBIENT_STATION_ID` - the id the station goes by in the database's `station_obs` and `clearsky_calibration` tables, and in `--station` (default `AMBIENT`; `station_ids.py`). A database whose rows carry another id keeps working when that id is set here.
+- `WEATHER_LAT`, `WEATHER_LON`, `WEATHER_DB_PATH` - location and database file (default `weather_archive.db`)
+
 ## Use
 
 ### Quick Start
@@ -74,7 +82,7 @@ Inside each tier the point value is tried from a web API before the GRIB downloa
 - Open-Meteo is built from model forecasts stitched together ("its newest run for that hour"), good for winds aloft but not the same thing as the HRRR analysis (f00), and its own notes say it is not meant for long series.
 
 ### Collection notes
-- Ambient: the API answers an empty page for an `endDate` inside an outage in the station's record (a power or network outage). `fetch_ambient_ambient` retries the page, then steps a day back and continues (`AMBIENT_MAX_GAP_DAYS`, 30 empty days in a row end the history), so one outage no longer ends a deep backfill.
+- Ambient: the API answers an empty page for an `endDate` inside an outage in the station's record (a power or network outage). `fetch_ambient_station` retries the page, then steps a day back and continues (`AMBIENT_MAX_GAP_DAYS`, 30 empty days in a row end the history), so one outage no longer ends a deep backfill.
 - Wunderground: HTTP 401 "API key is throttled" is the daily call limit. `collect_wunderground.py` stops cleanly (exit code 3) with what it saved kept; run it again after the reset. A 204 (the station sent nothing that day) is not an error; 429/5xx are retried.
 
 ### Advanced Usage

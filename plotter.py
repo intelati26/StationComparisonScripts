@@ -2,9 +2,9 @@
 """
 plotter.py — Reads weather_archive.db and generates a two-panel comparison plot:
 Top: Station temperatures + cascaded unified model line with shaded SD band.
-Bottom: AMBIENT Sensor Error Analysis with error-relative SD uncertainty band
+Bottom: Ambient Sensor Error Analysis with error-relative SD uncertainty band
         anchored to 0°F, 3-hour rolling average, 6-hour horizontal mean
-        segments with bias badges (including avg AMBIENT wind speed), and summary
+        segments with bias badges (including avg Ambient wind speed), and summary
         annotation.
 
 Model cascade: URMA -> RTMA -> HRRR f00 -> HRRR f01-f05 (forecast)
@@ -17,7 +17,7 @@ Now is HRRR forecast for hours that haven't happened yet.
 
 Legends are placed BELOW each respective axes to avoid overlapping data.
 
-6-hour block badges include the average AMBIENT STATION wind speed (mph)
+6-hour block badges include the average Ambient STATION wind speed (mph)
 for that block period — using the actual anemometer readings from
 station_obs, NOT the model wind_speed.
 
@@ -32,11 +32,12 @@ Usage:
     python plotter.py                     # Default: 48 hours
     python plotter.py --days 60           # 60 days
     python plotter.py --hours 144         # Fine-grained: 144 hours
-    python plotter.py --days 7 --stations AMBIENT,KSGF
+    python plotter.py --days 7 --stations <ambient id>,KSGF
     python plotter.py --no-model          # URMA/RTMA only -- skip HRRR blend & forecast
     python plotter.py --start-date 2026-06-01 --end-date 2026-07-01
 """
 
+from station_ids import AMBIENT_ID
 import os
 import argparse
 import sqlite3
@@ -556,7 +557,7 @@ def render_windrose(df, cutoff, end_time, out_path=None, ax=None, show_calm=Fals
 
     calm_note = (f"Calm (<{CALM_THRESHOLD_MPH:.0f}mph, binned): {calm_pct:.1f}%" if show_calm
                  else f"Calm (<{CALM_THRESHOLD_MPH:.0f}mph, excluded, see center): {calm_pct:.1f}%")
-    title = (f"AMBIENT Wind Rose  |  {cutoff.strftime('%Y-%m-%d %H:%M')} -> "
+    title = (f"Ambient Wind Rose  |  {cutoff.strftime('%Y-%m-%d %H:%M')} -> "
              f"{end_time.strftime('%Y-%m-%d %H:%M')} UTC\n"
              f"n={total_n}  |  {calm_note}")
     ax.set_title(title, fontsize=11 if not embedded else 9.5, pad=24 if not embedded else 18)
@@ -577,7 +578,7 @@ def draw_cloudiness_panel(fig, ax, solar_df, sky_df, unified_cloud_cover,
                           cutoff, plot_end, lat, lon,
                           solar_col, sky_col, date_fmt, major_loc, minor_loc,
                           calibration_points=None):
-    """Solar radiation (AMBIENT) vs. a coarse clear-sky reference curve,
+    """Solar radiation (Ambient) vs. a coarse clear-sky reference curve,
     as a same-width panel stacked under the temperature/bias graphs.
     Reference curve is a rough Haurwitz estimate (see clear_sky_ghi) --
     good for eyeballing cloudy dips against a sunny baseline, not a
@@ -682,7 +683,7 @@ def draw_cloudiness_panel(fig, ax, solar_df, sky_df, unified_cloud_cover,
         labels += cc_labels
     ax.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, -0.32),
              ncol=2, frameon=True, facecolor="white", framealpha=0.9, fontsize=8)
-    ax.set_title("Cloudiness: AMBIENT Solar Radiation vs. Clear-Sky Estimate "
+    ax.set_title("Cloudiness: Ambient Solar Radiation vs. Clear-Sky Estimate "
                  "& Model Cloud Cover", fontsize=10)
     return True
 
@@ -712,11 +713,11 @@ def main():
                         help=("Skip the solar-radiation-vs-clear-sky cloudiness "
                               "panel added below the main two panels. On by "
                               "default whenever station_obs has a populated "
-                              "solar radiation column for AMBIENT in the plotted "
+                              "solar radiation column for Ambient in the plotted "
                               "window."))
     parser.add_argument("--windrose", action="store_true",
                         help=("Also render a wind rose (direction vs speed "
-                              "frequency) for AMBIENT station data over the "
+                              "frequency) for Ambient station data over the "
                               "SAME timeframe as the main plot (cutoff -> "
                               "now), added as its own section below the "
                               "main two panels in the SAME output file. "
@@ -777,7 +778,7 @@ def main():
     # own tightened window -- so "what wind directions actually occurred"
     # always matches "what temperature/humidity data is shown" for the
     # exact same stretch of time, instead of two subtly different date
-    # ranges that happen to both say "AMBIENT" on the same page. This does
+    # ranges that happen to both say "Ambient" on the same page. This does
     # mean an explicit --hours N won't produce an exactly-N-hour windrose
     # (cutoff includes the +FORECAST_EXT_HOURS lead-in used by the model
     # cascade on the line graph) -- that's the accepted tradeoff for
@@ -848,7 +849,7 @@ def main():
     # Two genuinely different data sources need genuinely different
     # handling here, not one query for both:
     #
-    #   - Ambient stations (AMBIENT): rain_hourly ("hourlyrainin") is a
+    #   - Ambient stations: rain_hourly ("hourlyrainin") is a
     #     RATE (in/hr at that instant), NOT a period-accumulated total --
     #     confirmed by bymonth_viz.py's hourly_precipitation(), which
     #     deliberately never uses rain_hourly at all and instead derives
@@ -865,7 +866,7 @@ def main():
     #     separately by keeping just the last report per hour.
     #
     # Distinguished by whether rain_daily has any real data for that
-    # station in this window, not by hardcoding "AMBIENT" by name -- if a
+    # station in this window, not by hardcoding "Ambient" by name -- if a
     # future station source also reports via a Ambient-style running
     # counter, this picks up the correct method automatically.
     station_rain_series = {}  # {station: pd.Series}
@@ -962,7 +963,7 @@ def main():
         speed_real, dir_real = existing_cols[speed_cand], existing_cols[dir_cand]
         pop_check = cursor.execute(
             f"SELECT COUNT({speed_real}), COUNT({dir_real}) FROM station_obs "
-            f"WHERE station = 'AMBIENT' AND timestamp >= ?", [cutoff_iso]
+            f"WHERE station = '{AMBIENT_ID}' AND timestamp >= ?", [cutoff_iso]
         ).fetchone()
         speed_n, dir_n = pop_check
         if speed_n > 0 and dir_n > 0:
@@ -980,7 +981,7 @@ def main():
         speed_real = existing_cols["wind_speed"]
         speed_n = cursor.execute(
             f"SELECT COUNT({speed_real}) FROM station_obs "
-            f"WHERE station = 'AMBIENT' AND timestamp >= ?", [cutoff_iso]
+            f"WHERE station = '{AMBIENT_ID}' AND timestamp >= ?", [cutoff_iso]
         ).fetchone()[0]
         if speed_n > 0:
             wind_speed_col = speed_real
@@ -995,7 +996,7 @@ def main():
     # --- SELECT SOLAR RADIATION COLUMN (schema-introspected, cloudiness panel) ---
     # Same existence-isn't-enough caveat as the wind columns above: check
     # actual non-null population in the plotted window, not just presence
-    # in the schema. AMBIENT is the only station with a light sensor.
+    # in the schema. Ambient is the only station with a light sensor.
     SOLAR_COL_PRIORITY = [
         "solar_radiation", "solarradiation", "solar_rad", "solar",
     ]
@@ -1006,7 +1007,7 @@ def main():
         real = existing_cols[cand]
         n = cursor.execute(
             f"SELECT COUNT({real}) FROM station_obs "
-            f"WHERE station = 'AMBIENT' AND timestamp >= ?", [cutoff_iso]
+            f"WHERE station = '{AMBIENT_ID}' AND timestamp >= ?", [cutoff_iso]
         ).fetchone()[0]
         if n > 0:
             solar_col = real
@@ -1020,16 +1021,16 @@ def main():
             if "solar" in lower_name or "radiation" in lower_name:
                 n = cursor.execute(
                     f"SELECT COUNT({real}) FROM station_obs "
-                    f"WHERE station = 'AMBIENT' AND timestamp >= ?", [cutoff_iso]
+                    f"WHERE station = '{AMBIENT_ID}' AND timestamp >= ?", [cutoff_iso]
                 ).fetchone()[0]
                 if n > 0:
                     solar_col = real
                     break
     if solar_col:
-        print(f"  Solar radiation source: {solar_col} (AMBIENT)")
+        print(f"  Solar radiation source: {solar_col} (Ambient)")
     else:
         print(f"  [cloudiness] No populated solar-radiation-like column "
-              f"found for AMBIENT in this window. Cloudiness panel will be "
+              f"found for Ambient in this window. Cloudiness panel will be "
               f"skipped. Available columns: {sorted(existing_cols.values())}")
 
     # --- SELECT SKY-COVER COLUMN, IF ANY (schema-introspected, cloudiness panel) ---
@@ -1062,11 +1063,11 @@ def main():
               f"cloudiness panel (solar-vs-clear-sky still plots if "
               f"available).")
 
-    # --- LOAD AMBIENT STATION WIND SPEED (6h block badges) ---
+    # --- LOAD Ambient STATION WIND SPEED (6h block badges) ---
     station_wind_series = pd.Series(dtype=float)
     if not df_stations.empty and wind_speed_col:
         wind_query = (f"SELECT timestamp, {wind_speed_col} AS wind_speed FROM station_obs "
-                     f"WHERE station = 'AMBIENT' AND {wind_speed_col} IS NOT NULL "
+                     f"WHERE station = '{AMBIENT_ID}' AND {wind_speed_col} IS NOT NULL "
                      f"AND timestamp >= ? ORDER BY timestamp")
         wind_df = pd.read_sql(wind_query, conn, params=[cutoff_iso],
                               parse_dates=["timestamp"])
@@ -1075,10 +1076,10 @@ def main():
             wind_df = wind_df.sort_values("timestamp")
             wind_df = wind_df[~wind_df["timestamp"].duplicated(keep="last")]
             station_wind_series = wind_df.set_index("timestamp")["wind_speed"]
-            print(f"  AMBIENT station wind_speed ({wind_speed_col}): "
+            print(f"  Ambient station wind_speed ({wind_speed_col}): "
                   f"{len(station_wind_series)} points loaded")
 
-    # --- LOAD AMBIENT WIND SPEED+DIRECTION FOR --windrose ---
+    # --- LOAD Ambient WIND SPEED+DIRECTION FOR --windrose ---
     windrose_df = pd.DataFrame()
     if args.windrose:
         if wind_dir_col is None:
@@ -1091,7 +1092,7 @@ def main():
             windrose_query = (
                 f"SELECT timestamp, {wind_speed_col} AS wind_speed, "
                 f"{wind_dir_col} AS wind_dir FROM station_obs "
-                f"WHERE station = 'AMBIENT' AND {wind_speed_col} IS NOT NULL "
+                f"WHERE station = '{AMBIENT_ID}' AND {wind_speed_col} IS NOT NULL "
                 f"AND {wind_dir_col} IS NOT NULL "
                 f"AND timestamp >= ? AND timestamp <= ? ORDER BY timestamp")
             windrose_df = pd.read_sql(
@@ -1101,7 +1102,7 @@ def main():
                 windrose_df["timestamp"] = pd.to_datetime(windrose_df["timestamp"], utc=True)
                 windrose_df = windrose_df.sort_values("timestamp")
                 windrose_df = windrose_df[~windrose_df["timestamp"].duplicated(keep="last")]
-                print(f"  [windrose] AMBIENT {wind_speed_col}+{wind_dir_col}: "
+                print(f"  [windrose] Ambient {wind_speed_col}+{wind_dir_col}: "
                       f"{len(windrose_df)} points loaded ({cutoff.strftime('%Y-%m-%d %H:%M')} "
                       f"-> {now_utc.strftime('%Y-%m-%d %H:%M')} UTC)")
             else:
@@ -1117,7 +1118,7 @@ def main():
     if not args.no_cloudiness and solar_col:
         solar_df = pd.read_sql(
             f"SELECT timestamp, {solar_col} AS solar FROM station_obs "
-            f"WHERE station = 'AMBIENT' AND {solar_col} IS NOT NULL "
+            f"WHERE station = '{AMBIENT_ID}' AND {solar_col} IS NOT NULL "
             f"AND timestamp >= ? AND timestamp <= ? ORDER BY timestamp",
             conn, params=[cutoff_iso, now_utc.isoformat()], parse_dates=["timestamp"])
         if not solar_df.empty:
@@ -1125,7 +1126,7 @@ def main():
             solar_df = solar_df.sort_values("timestamp")
             solar_df = solar_df[~solar_df["timestamp"].duplicated(keep="last")]
 
-    # Empirical, elevation-binned clear-sky correction for AMBIENT, if
+    # Empirical, elevation-binned clear-sky correction for Ambient, if
     # calibrate_clearsky.py has been run (see that script). Absent/empty
     # table just means clear_sky_ghi() falls back to raw Haurwitz.
     calibration_points = []
@@ -1133,7 +1134,7 @@ def main():
         try:
             cal_rows = cursor.execute(
                 "SELECT elevation_bin_low, elevation_bin_high, correction_factor "
-                "FROM clearsky_calibration WHERE station = 'AMBIENT' "
+                f"FROM clearsky_calibration WHERE station = '{AMBIENT_ID}' "
                 "ORDER BY elevation_bin_low"
             ).fetchall()
         except sqlite3.OperationalError:          # a database that has never had calibrate_clearsky.py / init_db run: same as an empty table
@@ -1141,9 +1142,9 @@ def main():
         calibration_points = [((lo + hi) / 2.0, factor) for lo, hi, factor in cal_rows]
         if calibration_points:
             print(f"  [cloudiness] Using {len(calibration_points)} empirical "
-                  f"calibration bins for the clear-sky curve (AMBIENT).")
+                  f"calibration bins for the clear-sky curve (Ambient).")
         else:
-            print(f"  [cloudiness] No clearsky_calibration rows for AMBIENT -- "
+            print(f"  [cloudiness] No clearsky_calibration rows for Ambient -- "
                   f"clear-sky curve uses raw Haurwitz. Run "
                   f"calibrate_clearsky.py to improve this.")
 
@@ -1429,7 +1430,7 @@ def main():
 
     # --- TOP PANEL: TEMPERATURE TIME SERIES ---
     station_colors = {
-        "AMBIENT": "crimson", "KSGF": "darkorange", "KBBG": "forestgreen",
+        AMBIENT_ID: "crimson", "KSGF": "darkorange", "KBBG": "forestgreen",
     }
 
     STATION_GAP_THRESHOLD = pd.Timedelta(hours=2)
@@ -1546,7 +1547,7 @@ def main():
     # (time) so the two stay time-aligned without forcing a shared scale.
     # One bar series per plotted station (reusing that station's own line
     # color for visual consistency) plus one for the model, generalized
-    # from an earlier AMBIENT-only version now that KSGF/KBBG also populate
+    # from an earlier Ambient-only version now that KSGF/KBBG also populate
     # rain_hourly.
     ax1_rain = ax1.twinx()
     rain_max_seen = 0.01  # floor avoids a degenerate ylim when there's no rain
@@ -1579,7 +1580,7 @@ def main():
     ax1_rain.grid(False)  # ax1's own grid is enough; a second grid would clutter
 
     ax1.set_title(
-        f"Temperature Comparison & AMBIENT Sensor Bias (Solar Marked)",
+        f"Temperature Comparison & Ambient Sensor Bias (Solar Marked)",
         fontsize=12, fontweight="bold",
     )
     ax1.set_ylabel("Temperature (F)", fontsize=11)
@@ -1600,14 +1601,14 @@ def main():
     ax1_header_rows = len(ax1_period_rows)
     mark_extremes_on_graph(ax1, ax1_period_rows)
 
-    # --- BOTTOM PANEL: AMBIENT BIAS ---
+    # --- BOTTOM PANEL: Ambient BIAS ---
     daily_lines = []
     box_bottom = 0.0  # safe default if the daily summary box below never gets drawn
     summary_txt = None
 
-    if (not pivoted_stations.empty and "AMBIENT" in pivoted_stations.columns
+    if (not pivoted_stations.empty and AMBIENT_ID in pivoted_stations.columns
             and not model_for_bias.empty):
-        station_df = pivoted_stations[["AMBIENT"]].dropna().reset_index()
+        station_df = pivoted_stations[[AMBIENT_ID]].dropna().reset_index()
         station_df.columns = ["timestamp", "station_val"]
         station_df = station_df.dropna(subset=["timestamp"])
         station_df.set_index("timestamp", inplace=True)
@@ -1776,7 +1777,7 @@ def main():
             print("-------------------------------------------")
 
             ax2.plot(timestamps, error_series, linestyle="-", linewidth=0.8, color="crimson",
-                     alpha=0.6, zorder=2, label="Bias (Interp. AMBIENT)")
+                     alpha=0.6, zorder=2, label="Bias (Interp. Ambient)")
             # Daily max/min moved to a summary row above the plot (see
             # add_extremes_header) -- same reasoning as ax1 above.
             print_daily_extremes(error_series, label_prefix="Bias ")
@@ -1911,10 +1912,10 @@ def main():
             ax2_period_rows = []
             ax2_header_rows = 0
     else:
-        if (station_filter and "AMBIENT" not in station_filter):
-            msg = "AMBIENT not in station filter -- bias panel requires AMBIENT data"
+        if (station_filter and AMBIENT_ID not in station_filter):
+            msg = "Ambient not in station filter -- bias panel requires Ambient data"
         else:
-            msg = "Model or AMBIENT station data missing from database"
+            msg = "Model or Ambient station data missing from database"
         ax2.text(0.5, 0.5, msg,
                  horizontalalignment="center", verticalalignment="center",
                  transform=ax2.transAxes)

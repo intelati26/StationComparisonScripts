@@ -14,6 +14,7 @@ Layout:
 Reads from weather_archive.db, station_obs table.
 """
 
+from station_ids import AMBIENT_ID
 import argparse
 import sqlite3
 from datetime import datetime, timezone, timedelta
@@ -39,8 +40,8 @@ def parse_args():
                    help="Start date (inclusive).")
     p.add_argument("--end-date", type=str, default=None,
                    help="End date (inclusive). Defaults to now.")
-    p.add_argument("--station", type=str, default="AMBIENT",
-                   help="Station ID: AMBIENT, KJLN, or KEOS (default: AMBIENT)")
+    p.add_argument("--station", type=str, default=AMBIENT_ID,
+                   help="Station ID: the Ambient station's id, KJLN, or KEOS (default: AMBIENT_STATION_ID)")
     p.add_argument("--db", type=str, default=DB_PATH,
                    help="Path to SQLite DB")
     p.add_argument("--output", "-o", type=str, default=None,

@@ -26,7 +26,7 @@ Usage:
     python bymonth.py --viz 2026-08              # specific month, visual format
     python bymonth.py --both 2026-08             # specific month, both formats (HTML)
     python bymonth.py --calendar --viz           # both formats (alternative syntax)
-    python bymonth.py --station "AMBIENT"          # by device name or MAC
+    python bymonth.py --station "<ambient id>"          # by device name or MAC
     python bymonth.py 2026-08 --format text --out aug.txt
 """
 
@@ -832,7 +832,7 @@ def render_text(year, month, day_data, month_vals, month_ext, stations, display,
             out.append(f"  {label:<18} " + " · ".join(bits))
     return "\n".join(out)
 
-DEFAULT_VIS_STATION = "AMBIENT"
+DEFAULT_VIS_STATION = AMBIENT_ID
 SOLAR_CONSTANT = 1361.0
 
 

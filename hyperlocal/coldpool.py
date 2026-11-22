@@ -292,7 +292,7 @@ def ambient_history(start, end):
     api, app, mac = (os.environ.get(k) for k in ("AMBIENT_API_KEY", "AMBIENT_APP_KEY", "AMBIENT_STATION_MAC"))
     if not (api and app and mac):
         sys.exit("AMBIENT_API_KEY, AMBIENT_APP_KEY and AMBIENT_STATION_MAC must be set")
-    # paged the way StationComparisonScripts' fetch_ambient_ambient does (it is the one that works): endDate as an ISO string, one second before the oldest record seen
+    # paged the way StationComparisonScripts' fetch_ambient_station does (it is the one that works): endDate as an ISO string, one second before the oldest record seen
     acc, until, last = {}, end.strftime("%Y-%m-%dT%H:%M:%S.000Z"), None
     while until != last:
         last = until

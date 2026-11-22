@@ -2,7 +2,7 @@
 """The station's solar radiation against clear-sky estimates, DAY BY DAY across the whole record, with and without a humidity (dewpoint) adjustment.
 Models, per day:  A raw Haurwitz | B calibrated by sun elevation (median clearness of clear days) | C = B x (1 + b (dewpoint - reference)) | D0 physical (pvlib simplified Solis) x one sensor factor, water vapour fixed | D1 the same with water vapour from the station's own temperature and humidity.
 Each month is scored with a fit made from the OTHER months only (leave-one-month-out), so nothing is tuned to the days it is judged on.  Clear days = bright and smooth (calibrate_clearsky.py's test).
-  python analysis/clearsky_vs_station.py [--db FILE] [--station AMBIENT] [--csv OUT.csv] [--png OUT.png]     (the plotter's database with station_obs; WEATHER_LAT / WEATHER_LON from .env)
+  python analysis/clearsky_vs_station.py [--db FILE] [--station ID] [--csv OUT.csv] [--png OUT.png]     (the plotter's database with station_obs; WEATHER_LAT / WEATHER_LON from .env)
 Needs numpy, pandas, pvlib (pip install pvlib)."""
 import argparse, os, sqlite3, sys
 import numpy as np, pandas as pd
@@ -10,11 +10,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import coldpool as c
 import pvlib
 
-ap = argparse.ArgumentParser(); ap.add_argument("--db"); ap.add_argument("--station", default="AMBIENT"); ap.add_argument("--csv"); ap.add_argument("--png"); ap.add_argument("--month", help="YYYY-MM for a small-multiples sheet of that month")
+ap = argparse.ArgumentParser(); ap.add_argument("--db"); ap.add_argument("--station", help="the station's id in station_obs (default: AMBIENT_STATION_ID from .env, else AMBIENT)"); ap.add_argument("--csv"); ap.add_argument("--png"); ap.add_argument("--month", help="YYYY-MM for a small-multiples sheet of that month")
 ap.add_argument("--envelope", action="store_true", help="also use the clear STRETCHES of partly cloudy days (the smoothed upper envelope) and compare the fits")
 ap.add_argument("--sheet", help="PNG: a sheet of NON-clear days (measured against the calibrated curve with and without the dewpoint adjustment), spread over the dewpoint range")
 ap.add_argument("--days", help="with --sheet: comma-separated dates (YYYY-MM-DD) instead of the automatic pick")
-a = ap.parse_args(); c.load_env(); cfg = c.load_config()
+a = ap.parse_args(); c.load_env(); cfg = c.load_config(); a.station = a.station or os.environ.get("AMBIENT_STATION_ID") or "AMBIENT"
 db = a.db or os.environ.get("WEATHER_DB_PATH", "weather_archive.db"); lat, lon, alt = cfg["lat"], cfg["lon"], cfg["valley_elevation_ft"] * 0.3048
 q = ("SELECT timestamp, solar_radiation sr, dewpoint td, temperature t, relative_humidity rh FROM station_obs WHERE station=? AND solar_radiation IS NOT NULL AND solar_radiation>=0 "
      "AND dewpoint IS NOT NULL AND relative_humidity IS NOT NULL AND temperature IS NOT NULL ORDER BY timestamp")

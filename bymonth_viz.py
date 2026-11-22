@@ -13,6 +13,7 @@ Each day cell contains:
 Stdlib + matplotlib only. Python 3.9+.
 """
 
+from station_ids import AMBIENT_ID
 import argparse
 import calendar as calmod
 import math
@@ -51,7 +52,7 @@ _db_env = os.environ.get("WEATHER_DB_PATH", "weather_archive.db")
 DB_PATH = (_db_env if os.path.isabs(_db_env)
           else os.path.join(_SCRIPT_DIR, _db_env))
 
-DEFAULT_STATION = "AMBIENT"  # the only station with rain/solar/lightning data
+DEFAULT_STATION = AMBIENT_ID  # the only station with rain/solar/lightning data
 SOLAR_CONSTANT = 1361.0  # W/m²
 
 

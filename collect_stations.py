@@ -22,8 +22,8 @@ Usage:
   python collect_stations.py --station KSGF --days 60            # Last 60 days
   python collect_stations.py --station KBBG --hours 72 --force  # Overwrite last 72h
   python collect_stations.py --station KSGF,KBBG --start-date 2026-06-01 --end-date 2026-07-01
-  python collect_stations.py --ambient-force --days 30   # Re-pull AMBIENT only
-  python collect_stations.py --backfill-fields --days 30 # Fill missing AMBIENT fields
+  python collect_stations.py --ambient-force --days 30   # Re-pull the Ambient station only
+  python collect_stations.py --backfill-fields --days 30 # Fill missing Ambient-station fields
   python collect_stations.py --import-csv export.csv     # One-time CSV bulk import
   python collect_stations.py --iem-backfill KSGF                      # Last 48h via IEM
   python collect_stations.py --iem-backfill KSGF --days 365            # 1 year via IEM
@@ -31,6 +31,7 @@ Usage:
   python collect_stations.py --iem-backfill KSGF --full-history         # Entire station history
 """
 
+from station_ids import AMBIENT_ID
 import sys
 import argparse
 import time
@@ -39,7 +40,7 @@ from datetime import datetime, timezone, timedelta
 
 from weather_common import (
     DB_PATH, init_db, parse_date_arg,
-    fetch_nws_station, fetch_ambient_ambient, import_ambient_csv,
+    fetch_nws_station, fetch_ambient_station, import_ambient_csv,
     fetch_iem_asos, fetch_iem_asos_1min, IEM_FULL_HISTORY_START,
 )
 
@@ -60,11 +61,11 @@ def main():
     parser.add_argument("--force", action="store_true",
                         help="Re-download and overwrite ALL hours for NWS stations.")
     parser.add_argument("--ambient-force", action="store_true",
-                        help=("Force re-download ALL AMBIENT data with full "
+                        help=("Force re-download ALL Ambient-station data with full "
                               "fields, overwriting existing rows."))
     parser.add_argument("--backfill-fields", action="store_true",
                         help=("Re-paginate the Ambient Weather API to backfill "
-                              "missing fields into existing AMBIENT rows, "
+                              "missing fields into existing Ambient-station rows, "
                               "without inserting new rows."))
     parser.add_argument("--import-csv", type=str, default=None,
                         help=("ONE-TIME: bulk import an Ambient Weather "
@@ -72,9 +73,9 @@ def main():
                               "rows for matching (station, timestamp). Runs "
                               "standalone -- ignores --days/--hours/--force "
                               "and does not run the normal fetch loop."))
-    parser.add_argument("--import-station", type=str, default="AMBIENT",
+    parser.add_argument("--import-station", type=str, default=AMBIENT_ID,
                         help="Station code to tag imported CSV rows with "
-                             "(default: AMBIENT).")
+                             "(default: AMBIENT_STATION_ID).")
     parser.add_argument("--iem-backfill", type=str, default=None, metavar="STATION",
                         help=("Fetch station history from IEM Mesonet's ASOS "
                               "archive (hourly + special METAR reports) "
@@ -204,11 +205,11 @@ def main():
         start_time = now_utc - lookback
 
     if args.ambient_force:
-        print("\n=== AMBIENT FORCE BACKFILL (AMBIENT only) ===")
-        fetch_ambient_ambient(conn, start_time, end_time, force=True, fields_only=False)
+        print("\n=== AMBIENT FORCE BACKFILL (Ambient station only) ===")
+        fetch_ambient_station(conn, start_time, end_time, force=True, fields_only=False)
     elif args.backfill_fields:
         print("\n=== AMBIENT FIELDS BACKFILL (existing rows only) ===")
-        fetch_ambient_ambient(conn, start_time, end_time, force=False, fields_only=True)
+        fetch_ambient_station(conn, start_time, end_time, force=False, fields_only=True)
     else:
         if not args.station:
             parser.error(
@@ -219,8 +220,8 @@ def main():
             )
         stations = [s.strip() for s in args.station.split(",") if s.strip()]
         for st in stations:
-            if st == "AMBIENT":
-                fetch_ambient_ambient(conn, start_time, end_time, force=args.force)
+            if st == AMBIENT_ID:
+                fetch_ambient_station(conn, start_time, end_time, force=args.force)
             else:
                 fetch_nws_station(conn, st, start_time, end_time, force=args.force)
 

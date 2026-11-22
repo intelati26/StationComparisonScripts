@@ -4,7 +4,7 @@ daily_almanac.py -- A scripted recreation of IEM's Autoplot #218 ("Daily
 NWS CLImate Report Infographic"), but as bell curves instead of gauge
 dials, and sourced from our own pipeline (local db + ACIS fallback)
 instead of the NWS CLI text product -- which only exists for first-order
-NWS climate sites and wouldn't cover a personal station like AMBIENT anyway.
+NWS climate sites and wouldn't cover a personal station like the Ambient station anyway.
 
 WHY BELL CURVES, NOT GAUGES: a gauge just places today's value on a
 min/max scale. A bell curve fit to the calendar day's full history (mean,
@@ -29,7 +29,7 @@ for all three statistics, cached the same way as the rest of this
 pipeline's ACIS calls.
 
 SAMPLE SIZE CAVEAT / NEAREST-LONG-TERM-SITE FALLBACK: a short-record
-personal station (e.g. a 2-year-old AMBIENT) will have a very small n for
+personal station (e.g. a 2-year-old Ambient) will have a very small n for
 this calendar day. When n falls below --min-years, this looks up the
 closest ACIS-registered station with a long enough period of record (via
 ACIS StnMeta's bbox search) and substitutes ITS temperature distribution
@@ -40,7 +40,7 @@ not transfer well over even a few miles (convective events can dump 7" at
 one site and 1" a few miles away -- see this pipeline's own precip
 divergence chart), so precip fallback is off by default; pass
 --precip-fallback to opt in anyway. The nearest-site search needs
-coordinates for a non-ACIS station like AMBIENT -- pass --lat/--lon.
+coordinates for a non-ACIS station like the Ambient station -- pass --lat/--lon.
 
 Usage:
     python daily_almanac.py KSGF --date 2026-09-15
@@ -48,7 +48,7 @@ Usage:
     python daily_almanac.py KJLN --date 2026-07-04 --format png,svg
 
     # Short-record personal station: borrow temp climatology from the
-    # nearest long-term ACIS site (needs coordinates since AMBIENT isn't
+    # nearest long-term ACIS site (needs coordinates since the Ambient station isn't
     # ACIS-registered):
     python daily_almanac.py AMBIENT --lat 37.19 --lon -93.29 --min-years 10
 """
@@ -909,7 +909,7 @@ def main():
     ap.add_argument("--lat", type=float,
                     default=float(env["ALMANAC_LAT"]) if env.get("ALMANAC_LAT") else None,
                     help="Coordinates for the nearest-long-term-station fallback search "
-                         "(needed for a non-ACIS station like AMBIENT). "
+                         "(needed for a non-ACIS station like the Ambient station). "
                          "Default: ALMANAC_LAT in .env if present.")
     ap.add_argument("--lon", type=float,
                     default=float(env["ALMANAC_LON"]) if env.get("ALMANAC_LON") else None,

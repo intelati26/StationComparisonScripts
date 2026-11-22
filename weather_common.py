@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 weather_common.py — Shared library for NWS station fetching (KSGF, KBBG),
-Ambient Weather API fetching (AMBIENT), and NOAA analysis-model fetching
+Ambient Weather API fetching (the personal station), and NOAA analysis-model fetching
 (URMA/RTMA/HRRR/RRFS, with local spatial standard deviation uncertainty
 envelopes), all backed by a single SQLite archive.
 
@@ -101,6 +101,7 @@ CONCURRENT-WRITER NOTE:
   that runs don't regularly overlap for long.
 """
 
+from station_ids import AMBIENT_ID
 import os
 import sys
 import csv
@@ -154,6 +155,7 @@ SESSION.headers.update({"User-Agent": "TermuxWeatherPipeline/1.0 "
 #   AMBIENT_API_KEY=...
 #   AMBIENT_APP_KEY=...
 #   AMBIENT_STATION_MAC=...
+#   AMBIENT_STATION_ID=...   (the id the station goes by in the database; default AMBIENT)
 #   WEATHER_LAT=...
 #   WEATHER_LON=...
 
@@ -939,7 +941,7 @@ def fetch_nws_station(conn, station, start_time, end_time, force=False):
                 # BUG FIX: dewpoint from the NWS API is Celsius, exactly
                 # like temperature -- this was previously stored raw and
                 # unconverted, meaning KSGF/KBBG's dewpoint column held
-                # Celsius values while AMBIENT's (Ambient-sourced) dewpoint
+                # Celsius values while the Ambient station's (Ambient-sourced) dewpoint
                 # is correctly Fahrenheit. Same column, silently mixed
                 # units depending on station.
                 dp_c = props.get("dewpoint", {}).get("value")
@@ -948,7 +950,7 @@ def fetch_nws_station(conn, station, start_time, end_time, force=False):
                 # NWS API reports this in mm (wmoUnit:mm), matching the
                 # unit convention used for temperature/dewpoint -- convert
                 # to inches to match rain_hourly's existing convention
-                # (AMBIENT's Ambient-sourced values are already inches).
+                # (the Ambient station's Ambient-sourced values are already inches).
                 precip_mm = props.get("precipitationLastHour", {}).get("value")
                 rain_hourly = precip_mm / 25.4 if precip_mm is not None else None
 
@@ -984,7 +986,7 @@ def fetch_nws_station(conn, station, start_time, end_time, force=False):
 # Adds wind_speed for NWS stations (KSGF/KBBG), which fetch_nws_station()
 # above does NOT populate -- this is a deliberate enrichment beyond the
 # live-API path, made possible because IEM's ASOS export includes it and
-# station_obs already has the column (used for AMBIENT today).
+# station_obs already has the column (used for the Ambient station today).
 
 IEM_ASOS_BASE_URL = "https://mesonet.agron.iastate.edu/cgi-bin/request/asos.py"
 
@@ -1398,9 +1400,9 @@ def _extract_ambient_record(rec):
     return iso_ts, tuple(values)
 
 
-def fetch_ambient_ambient(conn, start_time, end_time, force=False,
+def fetch_ambient_station(conn, start_time, end_time, force=False,
                         fields_only=False):
-    """Fetch AMBIENT Ambient Weather station data via paginated API.
+    """Fetch Ambient Weather station data via paginated API.
     Rate limited to 1 req/sec with 429 exponential backoff retry.
 
     Modes:
@@ -1430,7 +1432,7 @@ def fetch_ambient_ambient(conn, start_time, end_time, force=False,
     else:
         mode = "SKIP EXISTING (insert new with full fields)"
 
-    print(f"Polling Ambient Weather API for AMBIENT [{mode}]...")
+    print(f"Polling Ambient Weather API for the Ambient station [{mode}]...")
     print(f"  Range: {start_time.strftime('%Y-%m-%d %H:%M')} -> "
           f"{end_time.strftime('%Y-%m-%d %H:%M')} UTC")
     print(f"  Rate limit: 1 req/sec -- adding 1.1s delay between paginated "
@@ -1439,7 +1441,7 @@ def fetch_ambient_ambient(conn, start_time, end_time, force=False,
     print(f"  Safety valve: max {AMBIENT_MAX_PAGES} pages")
 
     cursor = conn.cursor()
-    cursor.execute("SELECT timestamp FROM station_obs WHERE station = 'AMBIENT'")
+    cursor.execute("SELECT timestamp FROM station_obs WHERE station = ?", (AMBIENT_ID,))
     existing_timestamps = {row[0] for row in cursor.fetchall()}
 
     insert_sql = _build_ambient_insert_sql()
@@ -1501,7 +1503,7 @@ def fetch_ambient_ambient(conn, start_time, end_time, force=False,
                 break
 
         if resp is None or resp.status_code != 200:
-            print(f"  Aborting AMBIENT pagination after {max_retries} retries.")
+            print(f"  Aborting Ambient pagination after {max_retries} retries.")
             break
 
         time.sleep(1.1)
@@ -1575,15 +1577,15 @@ def fetch_ambient_ambient(conn, start_time, end_time, force=False,
                         continue
                     cursor.execute(
                         """SELECT wind_speed FROM station_obs
-                           WHERE station = 'AMBIENT' AND timestamp = ?""",
-                        (iso_ts,))
+                           WHERE station = ? AND timestamp = ?""",
+                        (AMBIENT_ID, iso_ts))
                     row = cursor.fetchone()
                     if row and row[0] is not None:
                         skipped_in_batch += 1
                         total_skipped += 1
                         continue
                     conn.execute(insert_sql,
-                                 ("AMBIENT", iso_ts) + field_values)
+                                 (AMBIENT_ID, iso_ts) + field_values)
                     backfilled_in_batch += 1
                     total_backfilled += 1
                     continue
@@ -1593,7 +1595,7 @@ def fetch_ambient_ambient(conn, start_time, end_time, force=False,
                     total_skipped += 1
                     continue
 
-                conn.execute(insert_sql, ("AMBIENT", iso_ts) + field_values)
+                conn.execute(insert_sql, (AMBIENT_ID, iso_ts) + field_values)
                 existing_timestamps.add(iso_ts)
 
                 if force and is_existing:
@@ -1668,11 +1670,11 @@ def fetch_ambient_ambient(conn, start_time, end_time, force=False,
             break
 
     if fields_only:
-        print(f"Finished AMBIENT backfill: {total_backfilled} rows updated, "
+        print(f"Finished Ambient backfill: {total_backfilled} rows updated, "
               f"{total_skipped} already had fields, "
               f"across {page_num} page(s).")
     else:
-        print(f"Finished AMBIENT: {total_new} new, {total_overwritten} "
+        print(f"Finished Ambient: {total_new} new, {total_overwritten} "
               f"overwritten, {total_skipped} skipped "
               f"across {page_num} page(s).")
 
@@ -1763,10 +1765,10 @@ def _build_csv_import_insert_sql():
             f"VALUES ({placeholders})")
 
 
-def import_ambient_csv(conn, csv_path, station="AMBIENT"):
+def import_ambient_csv(conn, csv_path, station=AMBIENT_ID):
     """One-time bulk import of an Ambient Weather dashboard CSV export into
     station_obs. Intended to run once per exported file, not on a schedule
-    -- unlike fetch_ambient_ambient, there's no pagination/rate-limiting here,
+    -- unlike fetch_ambient_station, there's no pagination/rate-limiting here,
     just a local file read.
 
     Existing rows for (station, timestamp) are overwritten (INSERT OR

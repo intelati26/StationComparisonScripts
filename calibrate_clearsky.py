@@ -13,6 +13,7 @@ site's elevation, typical haze, or this specific sensor's cosine
 response at low sun angles. All three show up the same way in the
 data: "measured solar runs consistently high or low relative to
 Haurwitz at a given sun angle." This script measures that directly
+from station_ids import AMBIENT_ID
 from the station's own history instead of guessing at it.
 
 METHOD (--method clear-days, the default; --method percentile is the original):
@@ -49,7 +50,7 @@ recompute and overwrite.
 Example:
     python calibrate_clearsky.py \
         --db /path/to/weather_archive.db \
-        --station AMBIENT \
+        --station $AMBIENT_STATION_ID \
         --refresh
 """
 
@@ -274,8 +275,8 @@ def main():
     )
     parser.add_argument("--db", required=True,
                         help="Path to the SQLite weather database")
-    parser.add_argument("--station", default="AMBIENT",
-                        help="Station to calibrate (default: AMBIENT)")
+    parser.add_argument("--station", default=AMBIENT_ID,
+                        help="Station to calibrate (default: AMBIENT_STATION_ID)")
     parser.add_argument("--lat", type=float, default=None,
                         help="Latitude (default: WEATHER_LAT env var)")
     parser.add_argument("--lon", type=float, default=None,

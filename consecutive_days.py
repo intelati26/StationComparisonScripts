@@ -2,7 +2,7 @@
 """
 consecutive_days.py — Find runs of consecutive calendar days meeting a
 temperature threshold (>= or <=), for any station in the archive,
-including AMBIENT.
+including the Ambient station.
 
 Connected to the rest of the pipeline rather than a standalone script:
 reuses load_daily_summary()/discover_stations()/DB_PATH/DEFAULT_TZ from
@@ -23,7 +23,7 @@ used in station_normals_vs_observed.py.
 A "run" requires an actual data point on every day in between -- a
 missing day (sensor gap, station offline) breaks the streak, same as a
 day that simply fails the threshold. This applies uniformly regardless
-of station, so AMBIENT's shorter history and NWS/IEM stations' longer
+of station, so the Ambient station's shorter history and NWS/IEM stations' longer
 history are both handled the same way.
 
 Usage:
@@ -290,7 +290,7 @@ def report_consecutive_days(daily, station, field, direction, threshold,
 def main():
     ap = argparse.ArgumentParser(
         description="Find runs of consecutive days meeting a temperature "
-                    "threshold, for any station (including AMBIENT). Stations "
+                    "threshold, for any station (including the Ambient station). Stations "
                     "not in the local db are automatically pulled from ACIS "
                     "if registered there.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
