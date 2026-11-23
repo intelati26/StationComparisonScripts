@@ -36,7 +36,9 @@ a.scatter([low_t], [d["low"]], marker="*", s=220, color="#ffd23f", edgecolor="bl
 a.annotate(f"{d['low']:.0f} F", (low_t, d["low"]), textcoords="offset points", xytext=(8, -14), color="#ffd23f", fontsize=10, weight="bold")
 if 32 >= min(fin) - 2 * d["sd"]: a.axhline(32, color="#6ec6ff", lw=0.8, ls=":")
 a.set_ylabel("temperature (F)", color=fg, fontsize=9); a.legend(fontsize=7.5, frameon=False, labelcolor=fg, loc="upper right")
-a.set_title(f"Tonight's low {d['low']:.0f} F +-{d['sd']:g}  (forecast {d['forecast_low']:.0f} F)", color=fg, fontsize=11)
+asof = datetime.fromisoformat(d["as_of_utc"].replace("Z", "+00:00")).astimezone(tz) if d.get("as_of_utc") else None
+head = f"Night of {datetime.strptime(d['night_date'], '%Y-%m-%d'):%m/%d/%y}, as of {asof:%m/%d/%y} {asof.hour % 12 or 12}:{asof:%M}{'am' if asof.hour < 12 else 'pm'} ({d['as_of_utc'][11:16]}Z)\n" if asof else "Tonight's "
+a.set_title(f"{head}low {d['low']:.0f} F +-{d['sd']:g}  (forecast {d['forecast_low']:.0f} F)", color=fg, fontsize=11)
 ax[1].plot(t, [h["wind_aloft"] for h in H], color="#ff9f6e", lw=1.8); ax[1].axhline(30, color="#ff9f6e", lw=0.8, ls=":")
 ax[1].set_ylabel("wind 450 m\n(mph)", color=fg, fontsize=8)
 ax[2].bar(t, [h["drop"] for h in H], width=0.03, color="#3ddc97"); ax[2].set_ylabel("drop (F)", color=fg, fontsize=8)

@@ -46,7 +46,9 @@ top.errorbar([lt], [j["low"]], yerr=[j["sd"]], fmt="*", color="darkgreen", ms=15
 top.axhline(j["forecast_low"], color="purple", lw=0.8, ls=":", alpha=0.6)
 top.annotate(f"{j['low']:.0f} F", (lt, j["low"] - j["sd"]), textcoords="offset points", xytext=(0, -16), ha="center", fontsize=10, color="darkgreen", weight="bold")
 top.set_ylabel("temperature (F)"); top.legend(loc="upper right", fontsize=8, ncol=2, frameon=True)
-top.set_title(f"Tonight's low {j['low']:.0f} F +-{j['sd']:g}  (equation {j['equation_low']:.0f} F, bias {j['bias']:+g}; forecast low {j['forecast_low']:.0f} F, rule {j['rule']:.0f} F)   cloud {j['cloud_mean']}%, wind aloft up to {j['wind_aloft_max']} mph", fontsize=10)
+asof = loc(j["as_of_utc"]); nd = datetime.strptime(j["night_date"], "%Y-%m-%d")
+head = f"Night of {nd:%m/%d/%y}, as of {asof:%m/%d/%y} {asof.hour % 12 or 12}:{asof:%M}{'am' if asof.hour < 12 else 'pm'} ({j['as_of_utc'][11:16]}Z)"
+top.set_title(f"{head}\nLow {j['low']:.0f} F +-{j['sd']:g}  (equation {j['equation_low']:.0f} F, bias {j['bias']:+g}; forecast low {j['forecast_low']:.0f} F, rule {j['rule']:.0f} F)   cloud {j['cloud_mean']}%, wind aloft up to {j['wind_aloft_max']} mph", fontsize=10)
 ax[1].plot(T, [h["wind_aloft"] for h in H], color="#2a78d6", lw=1.8, marker="o", ms=3)
 ax[1].axhline(30, color="gray", ls="--", lw=1); ax[1].text(t0, 30.5, " 30 mph: the drop is nearly gone", fontsize=8, color="gray", va="bottom")
 ax[1].set_ylabel("wind 450 m\nup (mph)")

@@ -34,6 +34,8 @@ p.add_argument("--td-adjust", type=float, default=float(os.environ["HYPERLOCAL_T
 p.add_argument("--bias", type=float, default=float(os.environ.get("HYPERLOCAL_BIAS") or 0.0), help="F added to the predicted low (default 0: the bias depends on the forecast it is fed: the equation's low ran 1.0 F warm on the NBM bulletin and 1.9 F cold on Open-Meteo's HRRR history; --log keeps each night's prediction so it can be scored; HYPERLOCAL_BIAS in .env)")
 p.add_argument("--sd", type=float, default=float(os.environ.get("HYPERLOCAL_SD") or 2.8), help="the standard deviation of the predicted low in F, shown as +- (default 2.8, measured on those nights; 0 hides it; HYPERLOCAL_SD in .env)")
 p.add_argument("--decimals", type=int, default=1, help="decimals of the coordinates sent (1 is about 10 km)")
+p.add_argument("--fc-sd", type=float, default=float(os.environ.get("HYPERLOCAL_FC_SD") or 2.3), help="the forecast's own error in F, added in quadrature to the equation's margin for the 99%% lowest (default 2.3, from 287 nights of NBS forecasts; 0 for the equation's margin alone)")
+p.add_argument("--no-lowest", action="store_true", help="hide the 99%% lowest")
 p.add_argument("--table", action="store_true", help="print every night hour")
 p.add_argument("--nws", action="store_true", help="take the temperature, dewpoint and cloud from the NWS hourly forecast (US only) instead of the HRRR; the wind aloft is still the HRRR's")
 p.add_argument("--hourly", action="store_true", help="a table of the night hours: local time, UTC hour, the forecast, the adjustment and the final temperature")
@@ -163,9 +165,11 @@ if a.nws:
     except Exception as e:
         print(f"NWS forecast unavailable ({type(e).__name__}): using the HRRR's", file=sys.stderr)
 LABEL = "NWS" if NWS else "HRRR"
+# after 5 am the night that is ending is over: the next one is the night shown (from that day's noon on, so only the coming night's hours qualify)
+START = now - timedelta(hours=1) if now.hour < 5 else max(now - timedelta(hours=1), now.replace(hour=12, minute=0, second=0, microsecond=0))
 rows = []
 for i, t in enumerate(T):
-    if t < now - timedelta(hours=1) or night(t) <= 0 or any(h[k][i] is None for k in ("temperature_2m", "dew_point_2m", "cloud_cover")) or wind_aloft(i) is None:
+    if t < START or night(t) <= 0 or any(h[k][i] is None for k in ("temperature_2m", "dew_point_2m", "cloud_cover")) or wind_aloft(i) is None:
         continue
     temp, td, cl, u = h["temperature_2m"][i], h["dew_point_2m"][i] - adj, h["cloud_cover"][i], wind_aloft(i)
     if t in NWS and NWS[t][1] is not None and NWS[t][2] is not None:
@@ -218,9 +222,17 @@ def table_text(sep="|", pad=False):
 
 
 LOW = pl[6] + a.bias                                  # the bias-corrected low; the hourly table below stays as the equation gives it
+# the lowest expected (1 night in 100): the equation's own margin, 0.7 F + half of the pool it held back (A x (1 - g), g = wind x cloud x dryness at the low hour; analysis/low_bound.py, EQUATION.md), +1.5 F in
+# Dec-Feb, and the forecast's error (2.33 SD) in quadrature
+g_low = min(1.0, pl[5] / (a.amp * max(night(pl[0]), 1e-6))) if a.amp else 1.0
+margin = 0.7 + 0.5 * a.amp * (1 - g_low) + (1.5 if now.month in (12, 1, 2) else 0.0)
+LOWEST = LOW - math.hypot(margin, 2.33 * a.fc_sd)
 SD = f" +-{a.sd:g}" if a.sd else ""
+if SD and not a.no_lowest:
+    SD += f" (99% {LOWEST:.0f})"
 zt = lambda t: (t - OFFSET).strftime("%Y-%m-%dT%H:%M:%SZ")
-PAYLOAD = {"low": round(LOW, 1), "equation_low": round(pl[6], 1), "low_utc": zt(pl[0]), "forecast_low": round(fl[1], 1), "rule": round(rule, 1), "bias": a.bias, "sd": a.sd, "amp": a.amp, "source": LABEL, "td_adjust": adj,
+NIGHT_DATE = (rows[0][0] - timedelta(days=1) if rows[0][0].hour < 12 else rows[0][0]).strftime("%Y-%m-%d")      # the evening the night began
+PAYLOAD = {"night_date": NIGHT_DATE, "as_of_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "low": round(LOW, 1), "equation_low": round(pl[6], 1), "low_utc": zt(pl[0]), "forecast_low": round(fl[1], 1), "rule": round(rule, 1), "bias": a.bias, "sd": a.sd, "lowest99": round(LOWEST, 1), "amp": a.amp, "source": LABEL, "td_adjust": adj,
            "utc_offset_seconds": d.get("utc_offset_seconds") or 0, "cloud_mean": round(cloud), "wind_aloft_max": round(umax),
            "hours": [{"utc": zt(t), "forecast": round(temp, 1), "dewpoint": round(td, 1), "cloud": cl, "wind_aloft": round(u, 1), "drop": round(dr, 2), "final": round(pr, 1)} for t, temp, td, cl, u, dr, pr in rows]}
 if a.log is not None:
