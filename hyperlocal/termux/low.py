@@ -37,7 +37,8 @@ p.add_argument("--decimals", type=int, default=1, help="decimals of the coordina
 p.add_argument("--fc-sd", type=float, default=float(os.environ.get("HYPERLOCAL_FC_SD") or 2.3), help="the forecast's own error in F, added in quadrature to the equation's margin for the 99%% lowest (default 2.3, from 287 nights of NBS forecasts; 0 for the equation's margin alone)")
 p.add_argument("--no-lowest", action="store_true", help="hide the 99%% lowest")
 p.add_argument("--table", action="store_true", help="print every night hour")
-p.add_argument("--nws", action="store_true", help="take the temperature, dewpoint and cloud from the NWS hourly forecast (US only) instead of the HRRR; the wind aloft is still the HRRR's")
+p.add_argument("--nws", action="store_true", help="the default now: the temperature, dewpoint and cloud come from the NWS hourly forecast (US only); the wind aloft is the HRRR's")
+p.add_argument("--hrrr", action="store_true", help="take the temperature, dewpoint and cloud from the HRRR instead of the NWS hourly forecast (also what is used when the NWS does not answer)")
 p.add_argument("--hourly", action="store_true", help="a table of the night hours: local time, UTC hour, the forecast, the adjustment and the final temperature")
 p.add_argument("--log", nargs="?", const="", default=None, metavar="FILE", help="append this run (the night's hours, the low, the options) as one JSON line to FILE (default: HYPERLOCAL_LOG from .env, else ~/.low_log.jsonl) so the predictions can be scored against the station: score_low_log.py")
 p.add_argument("--json", action="store_true", help="print the night as JSON (the hours, the low with the bias and the SD) for a plot: plot_low.py; no coordinates in it")
@@ -159,7 +160,7 @@ def nws_hourly():
 
 adj = a.td_adjust if a.td_adjust is not None else (1.0 if 6 <= now.month <= 8 else 3.0 if 9 <= now.month <= 11 else 2.0)      # summer 1 F (measured bias 0.6), fall 3 F (measured bias 2.1, plus the equation's own warm lag when fed forecasts), else 2 F (not measured)
 NWS = {}
-if a.nws:
+if not a.hrrr:
     try:
         NWS = nws_hourly()
     except Exception as e:
