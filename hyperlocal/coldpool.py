@@ -410,6 +410,35 @@ GRIB_WANT = (("TMP", "2 m above ground"), ("UGRD", "10 m above ground"), ("VGRD"
 GRIB_DPT = (("DPT", "2 m above ground"),)
 
 
+_gdal_grib_ok = True      # False once gdallocationinfo has shown it cannot open a GRIB file (a GDAL build without its GRIB driver, as on some Windows installs): pygrib reads then
+_grid_cache = {}
+_grid_lock = __import__("threading").Lock()
+
+
+def _pygrib_value(path, lat, lon):
+    """The value at the point from the first message of a GRIB file, read with pygrib (pip install pygrib: its Windows wheels carry eccodes). None when the point is more than about 0.1 degree from any grid point."""
+    import numpy as np
+    import pygrib
+    g = pygrib.open(path)
+    try:
+        msg = g[1]
+        vals = np.asarray(msg.values, dtype=float)
+        with _grid_lock:
+            if vals.shape not in _grid_cache:
+                lats, lons = msg.latlons()
+                _grid_cache.clear()
+                _grid_cache[vals.shape] = (np.asarray(lats), np.asarray(lons))
+            lats, lons = _grid_cache[vals.shape]
+        dlon = (lons - lon + 180.0) % 360.0 - 180.0
+        d2 = (lats - lat) ** 2 + (dlon * math.cos(math.radians(lat))) ** 2
+        i = int(np.argmin(d2))
+        if d2.flat[i] >= 0.1 ** 2 or np.ma.is_masked(vals.flat[i]):
+            return None
+        return float(vals.flat[i])
+    finally:
+        g.close()
+
+
 def grib_urma_hour(cfg, h, want=GRIB_WANT, dataset="urma"):
     """URMA at the point for one hour, straight from NOAA's AWS bucket: the index, then only the four messages (about 6 MB each)
     by byte range, each read with gdallocationinfo. Free but slow. -> (temp_f, cloud, wind_mph) or None."""
@@ -432,10 +461,30 @@ def grib_urma_hour(cfg, h, want=GRIB_WANT, dataset="urma"):
     def one(item):
         name, (a, b) = item
         req = urllib.request.Request(base, headers={"Range": f"bytes={a}-{b if b is not None else ''}"})
-        with tempfile.NamedTemporaryFile(suffix=".grb2") as f:
-            f.write(urllib.request.urlopen(req, timeout=120).read()); f.flush()
-            out = subprocess.run(["gdallocationinfo", "-valonly", "-wgs84", f.name, str(cfg["lon"]), str(cfg["lat"])], capture_output=True, text=True)
-            return name, float(out.stdout.split()[0])
+        global _gdal_grib_ok
+        import os, shutil
+        fd, path = tempfile.mkstemp(suffix=".grb2")          # closed before it is opened again: Windows will not let a second program open a temp file that is still open
+        try:
+            with os.fdopen(fd, "wb") as f:
+                f.write(urllib.request.urlopen(req, timeout=120).read())
+            if _gdal_grib_ok and shutil.which("gdallocationinfo"):
+                out = subprocess.run(["gdallocationinfo", "-valonly", "-wgs84", path, str(cfg["lon"]), str(cfg["lat"])], capture_output=True, text=True)
+                if "not recognized" in out.stderr or "gdal_GRIB" in out.stderr:
+                    _gdal_grib_ok = False                     # this GDAL has no GRIB driver: pygrib below, and not tried again this run
+                elif out.stdout.split():
+                    return name, float(out.stdout.split()[0])
+            try:
+                v = _pygrib_value(path, cfg["lat"], cfg["lon"])
+            except ImportError:
+                raise RuntimeError("GDAL cannot read GRIB here and pygrib is not installed (pip install pygrib)")
+            if v is None:
+                raise RuntimeError("the point is outside the grid")
+            return name, v
+        finally:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
     try:
         with ThreadPoolExecutor(4) as ex:
             v = dict(ex.map(one, spans.items()))

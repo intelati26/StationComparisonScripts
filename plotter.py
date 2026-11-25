@@ -120,6 +120,30 @@ def get_sunrise_sunset_for_date(date_obj, lat, lon):
         return None, None
 
 
+def day_night_bounds(day_date, lat, lon):
+    """(sunrise, sunset, next_sunrise) of the daylight that begins on UTC day `day_date`, as UTC datetimes (None, None, None when astral cannot say).
+    Found by ORDER, not by trusting which date astral files a time under: it has put a place's sunset under its own date or under the next one,
+    depending on the version and the longitude. So the events of the days around are collected and the first sunrise on or after the day's start is
+    taken, then the first sunset after it, then the first sunrise after that."""
+    rises, sets = [], []
+    for off in (-1, 0, 1, 2):
+        r, st = get_sunrise_sunset_for_date(day_date + timedelta(days=off), lat, lon)
+        if r is not None and st is not None:
+            rises.append(r)
+            sets.append(st)
+    if not rises:
+        return None, None, None
+    start = datetime(day_date.year, day_date.month, day_date.day, tzinfo=timezone.utc)
+    sunrise = next((r for r in sorted(set(rises)) if r >= start), None)
+    if sunrise is None:
+        return None, None, None
+    sunset = next((x for x in sorted(set(sets)) if x > sunrise), None)
+    if sunset is None:
+        return sunrise, None, None
+    next_sunrise = next((r for r in sorted(set(rises)) if r > sunset), None)
+    return sunrise, sunset, next_sunrise
+
+
 def _haurwitz_from_elevation(elev_deg):
     """Raw (uncorrected) Haurwitz clear-sky GHI estimate (W/m^2) from
     solar elevation alone -- no turbidity/humidity/siting correction.
@@ -241,14 +265,7 @@ def print_sd_coverage_diagnostic(unified_sd, cutoff, plot_end, lat, lon):
     day_vals, night_vals = [], []
     for ts, val in real.items():
         local_date = ts.date()
-        sunrise, _ = get_sunrise_sunset_for_date(local_date, lat, lon)
-        # Same longitude quirk as the daily bias/SD summary: the sunset
-        # returned for local_date itself is the trailing edge of the
-        # PREVIOUS night, not the one ending local_date's own daylight.
-        # The real evening sunset for local_date comes from querying
-        # local_date + 1 day instead.
-        _, evening_sunset = get_sunrise_sunset_for_date(
-            local_date + timedelta(days=1), lat, lon)
+        sunrise, evening_sunset, _ = day_night_bounds(local_date, lat, lon)
         if sunrise is None or evening_sunset is None:
             continue
         if sunrise <= ts <= evening_sunset:
@@ -1718,10 +1735,7 @@ def main():
                 # too-early sunset as its start, stretching "night" to
                 # ~35h instead of ~12h and inflating its n far past the
                 # Full Day bucket).
-                sunrise, _ = get_sunrise_sunset_for_date(day_date, args.lat, args.lon)
-                next_day = day_date + timedelta(days=1)
-                next_sunrise, evening_sunset = get_sunrise_sunset_for_date(
-                    next_day, args.lat, args.lon)
+                sunrise, evening_sunset, next_sunrise = day_night_bounds(day_date, args.lat, args.lon)
 
                 if sunrise is not None and evening_sunset is not None:
                     dt_start = max(pd.Timestamp(sunrise), day_start)
@@ -1739,23 +1753,27 @@ def main():
                 else:
                     daily_lines.append(f"           Daytime      no sunrise/sunset")
 
+                # The night is reported as its own line: "Night of 11-24 into 11-25" runs from the sunset that ends day D to the next sunrise, so it is not cut at midnight into two days' halves.
+                night_label = f"Night of {day_date:%m-%d} into {(day_date + timedelta(days=1)):%m-%d}"
                 if evening_sunset is not None and next_sunrise is not None:
                     nt_start = max(pd.Timestamp(evening_sunset), day_start)
                     nt_end = min(pd.Timestamp(next_sunrise), now_utc)
+                    in_progress_night = nt_start <= now_utc < pd.Timestamp(next_sunrise)
+                    tag = " (in progress)" if in_progress_night else ""
                     if nt_end > nt_start:
                         nt_bias, nt_sd, nt_n = compute_period_stats(error_series, nt_start, nt_end)
                         if nt_bias is not None:
-                            daily_lines.append(f"           Nighttime    Bias {nt_bias}  SD {nt_sd}  n={nt_n}")
+                            daily_lines.append(f"           {night_label}{tag}  Bias {nt_bias}  SD {nt_sd}  n={nt_n}")
                         elif nt_n > 0:
-                            daily_lines.append(f"           Nighttime    Bias —  SD —  n={nt_n}")
+                            daily_lines.append(f"           {night_label}{tag}  Bias —  SD —  n={nt_n}")
                         else:
-                            daily_lines.append(f"           Nighttime    no data yet")
+                            daily_lines.append(f"           {night_label}{tag}  no data yet")
                     else:
-                        daily_lines.append(f"           Nighttime    not yet started")
+                        daily_lines.append(f"           {night_label}  not yet started")
                 elif evening_sunset is None:
-                    daily_lines.append(f"           Nighttime    no sunset data")
+                    daily_lines.append(f"           {night_label}  no sunset data")
                 else:
-                    daily_lines.append(f"           Nighttime    no sunrise data")
+                    daily_lines.append(f"           {night_label}  no sunrise data")
                 daily_lines.append("")
 
             if daily_lines and daily_lines[-1] == "":

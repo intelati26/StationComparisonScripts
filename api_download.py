@@ -143,14 +143,74 @@ _GRIB_WANT = (("TMP", "2 m above ground"), ("UGRD", "10 m above ground"), ("VGRD
               ("TCDC", "entire atmosphere (considered as a single layer)"))
 
 
+_gdal_grib_ok = True      # False once gdallocationinfo has shown it cannot open a GRIB file (a GDAL build without its GRIB driver, as on some Windows installs)
+_grid_cache = {}
+_grid_lock = __import__("threading").Lock()      # the four reads run in threads: the grid's coordinates are made once
+
+
+def _pygrib_values(path, points):
+    """The value at each point of the first message of a GRIB file, read with pygrib (pip install pygrib: its Windows wheels carry eccodes). The grid's latitudes and longitudes are worked out once
+    per grid shape; a point more than about 0.1 degree from any grid point is outside the grid (None)."""
+    import numpy as np
+    import pygrib
+    g = pygrib.open(path)
+    try:
+        msg = g[1]
+        vals = np.asarray(msg.values, dtype=float)
+        key = vals.shape
+        with _grid_lock:
+            if key not in _grid_cache:
+                lats, lons = msg.latlons()
+                _grid_cache.clear()
+                _grid_cache[key] = (np.asarray(lats), np.asarray(lons))
+            lats, lons = _grid_cache[key]
+        out = []
+        for lat, lon in points:
+            dlon = (lons - lon + 180.0) % 360.0 - 180.0
+            d2 = (lats - lat) ** 2 + (dlon * math.cos(math.radians(lat))) ** 2
+            i = int(np.argmin(d2))
+            out.append(float(vals.flat[i]) if d2.flat[i] < 0.1 ** 2 and not np.ma.is_masked(vals.flat[i]) else None)
+        return out
+    finally:
+        g.close()
+
+
+def _gdal_values(path, points):
+    """One line a point from gdallocationinfo: a blank line is a point outside the grid. Raises when GDAL cannot read the file at all."""
+    import subprocess
+    global _gdal_grib_ok
+    coords = "".join(f"{lon} {lat}\n" for lat, lon in points)
+    run = subprocess.run(["gdallocationinfo", "-valonly", "-wgs84", path], input=coords.encode(), capture_output=True)
+    err = run.stderr.decode(errors="replace")
+    if "not recognized" in err or "not available in your installation" in err or "gdal_GRIB" in err:
+        _gdal_grib_ok = False                           # no GRIB driver in this GDAL: do not try it again this run
+        raise RuntimeError("this GDAL has no GRIB driver")
+    lines = run.stdout.decode(errors="replace").splitlines()
+    vals = [float(x.split()[0]) if x.strip() else None for x in lines]
+    if len(vals) != len(points):
+        raise ValueError("gdallocationinfo returned the wrong number of values (%d for %d points)%s" % (len(vals), len(points), (": " + err.strip()[:200]) if err.strip() else ""))
+    return vals
+
+
+def _have_pygrib():
+    try:
+        import pygrib  # noqa: F401
+        import numpy  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
 def grib_points(model_key, target_time, points):
     """URMA/RTMA straight from NOAA's AWS bucket without eccodes or Herbie: the .idx, then only the four messages (about 6 MB each) by byte range,
     each read at ALL the points at once with gdallocationinfo (needs GDAL's command line tools). points = [(lat, lon), ...]
     -> [(temp_f, None, cloud, wind_mph, None), ...] in the same order, or None. Several stations cost one download, not one each."""
     import shutil, subprocess, tempfile
     from concurrent.futures import ThreadPoolExecutor
-    if not _enabled("gribfast") or not shutil.which("gdallocationinfo") or model_key not in ("urma", "rtma"):
+    if not _enabled("gribfast") or model_key not in ("urma", "rtma"):
         return None
+    if not ((_gdal_grib_ok and shutil.which("gdallocationinfo")) or _have_pygrib()):
+        return None                                  # neither GDAL's command line tools (with a GRIB driver) nor pygrib
     t0 = target_time.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
     base = f"https://noaa-{model_key}-pds.s3.amazonaws.com/{model_key}2p5.{t0:%Y%m%d}/{model_key}2p5.t{t0:%H}z.2dvaranl_ndfd.grb2_wexp"
     try:
@@ -170,21 +230,27 @@ def grib_points(model_key, target_time, points):
     def one(item):
         name, (a, b) = item
         req = urllib.request.Request(base, headers={"Range": f"bytes={a}-{b if b is not None else ''}"})
-        # The file is closed before gdallocationinfo opens it (Windows will not let a second program open a temp file that is still open), and the points go in as bytes (no newline translation).
+        # The file is closed before it is opened again (Windows will not let a second program open a temp file that is still open).
         import os as _os
         fd, path = tempfile.mkstemp(suffix=".grb2")
         try:
             with _os.fdopen(fd, "wb") as f:
                 f.write(urllib.request.urlopen(req, timeout=120).read())
-            out = subprocess.run(["gdallocationinfo", "-valonly", "-wgs84", path], input=coords.encode(), capture_output=True).stdout.decode(errors="replace").split()
+            vals = None
+            if _gdal_grib_ok and shutil.which("gdallocationinfo"):
+                try:
+                    vals = _gdal_values(path, points)
+                except RuntimeError:
+                    vals = None                      # no GRIB driver: pygrib below
+            if vals is None:
+                if not _have_pygrib():
+                    raise RuntimeError("GDAL has no GRIB driver and pygrib is not installed (pip install pygrib)")
+                vals = _pygrib_values(path, points)
         finally:
             try:
                 _os.remove(path)
             except OSError:
                 pass
-        vals = [float(x) for x in out]
-        if len(vals) != len(points):
-            raise ValueError("gdallocationinfo returned the wrong number of values")
         return name, vals
     try:
         with ThreadPoolExecutor(4) as ex:
@@ -194,6 +260,10 @@ def grib_points(model_key, target_time, points):
         return None
     result = []
     for i in range(len(points)):
+        if any(v[k][i] is None for k in v):             # the point is outside the grid this model covers
+            print(f"    {model_key}: the point ({points[i][0]}, {points[i][1]}) is outside the grid (CONUS only)")
+            result.append(None)
+            continue
         tc = v["TMP"][i]
         tc = tc - 273.15 if tc > 150 else tc         # GDAL gives degrees C for temperature, Kelvin if it did not convert
         result.append((tc * 9 / 5 + 32, None, v["TCDC"][i], math.hypot(v["UGRD"][i], v["VGRD"][i]) * 2.23694, None))
@@ -202,7 +272,7 @@ def grib_points(model_key, target_time, points):
 
 def gribfast(model_key, target_time, lat, lon):
     r = grib_points(model_key, target_time, [(lat, lon)])
-    if r:
+    if r and r[0] is not None:
         print(f"    {model_key}: from the AWS file, byte ranges (no eccodes)")
         return r[0]
     return None
